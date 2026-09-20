@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>YouTube Hub</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <h1>YouTube Hub</h1>
+  <label class="checkbox-inline header-watched-toggle"><input type="checkbox" id="show-watched-toggle" /> 視聴済みの動画も表示</label>
+  <button id="settings-toggle" class="icon-button" title="設定">設定</button>
+</header>
+
+<div id="settings-backdrop" class="settings-backdrop" hidden></div>
+
+<section id="settings-panel" class="settings-panel">
+  <div class="settings-panel-header">
+    <h2>設定</h2>
+    <button type="button" id="settings-close" class="icon-button" title="閉じる">✕</button>
+  </div>
+
+  <div class="field">
+    <label for="api-key-input">YouTube Data API v3 キー</label>
+    <input type="text" id="api-key-input" placeholder="AIza..." />
+    <p class="hint">Google Cloud ConsoleでYouTube Data API v3を有効化して発行したAPIキーを貼り付けてください（README参照）。</p>
+  </div>
+
+  <div class="field">
+    <label for="news-count-input">1日にサジェストするニュース件数</label>
+    <input type="number" id="news-count-input" min="1" max="10" value="3" />
+  </div>
+
+  <div class="field">
+    <label for="watch-ratio-input">視聴済みと判定する再生割合（%）</label>
+    <input type="number" id="watch-ratio-input" min="1" max="100" value="90" />
+    <p class="hint">ダッシュボード内のプレイヤーで、動画の再生時間に対してこの割合以上再生した時点で自動的に「視聴済み」として記録します。</p>
+  </div>
+
+  <div class="field">
+    <label class="checkbox-inline"><input type="checkbox" id="video-stats-toggle" checked /> 動画の再生時間・再生数を表示する</label>
+    <p class="hint">「登録チャンネルの新着」「今日のニュース」のサムネイルに再生時間バッジ、説明欄に再生数（例：3.2万回視聴）を表示します。オンにするとYouTube Data APIの`videos.list`呼び出しが追加で発生します（表示対象の動画IDをまとめて渡すため、1回の更新あたり概ね+1〜3ユニット程度の見込みです）。</p>
+  </div>
+
+  <div class="field">
+    <label>登録チャンネル</label>
+    <form id="channel-add-form" class="inline-form">
+      <input type="text" id="channel-add-input" placeholder="チャンネルURL / @ハンドル / チャンネルID(UC...)" />
+      <label class="checkbox-inline"><input type="checkbox" id="channel-add-news" /> ニュース対象</label>
+      <label class="checkbox-inline"><input type="checkbox" id="channel-add-show-in-feed" checked /> 登録チャンネル一覧に表示</label>
+      <label class="number-inline">表示件数 <input type="number" id="channel-add-count" min="1" max="50" value="6" /></label>
+      <label class="number-inline">直近 <input type="number" id="channel-add-days" min="0" placeholder="制限なし" /> 日以内</label>
+      <button type="submit">追加</button>
+    </form>
+    <p class="hint">「登録チャンネル一覧に表示」をオフにすると、そのチャンネルは「登録チャンネルの新着」セクションには表示されず、ニュース対象にした場合はニュース欄のサジェスト元としてのみ使われます。「表示件数」は「登録チャンネルの新着」に並べる動画の最大本数、「直近n日以内」は公開からn日を超えた動画を除外する設定です（空欄なら期間の制限なし）。登録後もチャンネル一覧の各項目（表示件数・日数の変更、↑↓ボタンでの並べ替え）からいつでも変更できます。</p>
+    <ul id="channel-list" class="manage-list"></ul>
+  </div>
+
+  <div class="field">
+    <label>お気に入り動画（個別登録）</label>
+    <form id="favorite-add-form" class="inline-form">
+      <input type="text" id="favorite-add-input" placeholder="動画URL または 動画ID" />
+      <button type="submit">追加</button>
+    </form>
+    <ul id="favorite-manage-list" class="manage-list"></ul>
+  </div>
+
+  <p class="hint">設定はこのブラウザのlocalStorageにのみ保存されます（サーバー送信なし）。APIキーを他人と共有しないでください。</p>
+</section>
+
+<section id="player-section" class="player-section" hidden>
+  <div id="player"></div>
+  <button id="player-close">閉じる</button>
+</section>
+
+<section class="video-section">
+  <h2>今日のニュース <span class="section-hint">（リロードのたびに自動更新）</span>
+    <button type="button" id="news-refresh-btn" class="icon-button news-refresh-btn" title="今日のニュースを今すぐ更新">更新</button>
+  </h2>
+  <div class="grid" id="news-grid"><p class="empty">設定でAPIキーとニュース対象チャンネルを登録してください。</p></div>
+</section>
+
+<section class="video-section channels-section">
+  <h2>登録チャンネルの新着</h2>
+  <div id="channels-container"><p class="empty">設定でチャンネルを登録してください。</p></div>
+</section>
+
+<section class="video-section">
+  <h2>お気に入り動画</h2>
+  <div class="grid" id="favorites-grid"><p class="empty">設定でお気に入り動画を登録してください。</p></div>
+</section>
+
+<footer class="app-footer">
+  <span id="quota-badge">API使用量（概算）: -</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

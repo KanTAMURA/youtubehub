@@ -1,0 +1,389 @@
+:root {
+  --bg: #0f0f0f;
+  --surface: #181818;
+  --surface-2: #212121;
+  --text: #f1f1f1;
+  --text-dim: #aaaaaa;
+  --accent: #3ea6ff;
+  --border: #303030;
+  font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-header h1 {
+  font-size: 18px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* スクロールしても操作できるよう、視聴済み表示のトグルはヘッダーに常設する */
+.header-watched-toggle {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.icon-button {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: #2a2a2a;
+}
+
+/* 設定パネルは「扉」のように右からスライドして開くドロワーにする。
+   ページのどこまでスクロールしていても、設定ボタンを押せばすぐに操作できる。 */
+.settings-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 90vw);
+  padding: 16px 20px 24px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 100;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+}
+.settings-panel.open {
+  transform: translateX(0);
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 90;
+}
+
+body.settings-open {
+  overflow: hidden;
+}
+
+.settings-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.settings-panel-header h2 { margin: 0; font-size: 15px; }
+.settings-panel-header .icon-button {
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.field { margin-bottom: 18px; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.field input[type="text"],
+.field input[type="number"] {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.hint { font-size: 11px; color: var(--text-dim); margin: 6px 0 0; }
+
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.inline-form input[type="text"] { flex: 1; min-width: 200px; }
+.inline-form button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #041322;
+  font-weight: 600;
+  cursor: pointer;
+}
+.checkbox-inline { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.number-inline { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.number-inline input[type="number"] {
+  width: 60px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.manage-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.manage-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.manage-list button {
+  background: none;
+  border: none;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* チャンネル管理リストは「表示件数」「直近n週間」の編集欄を持つため2段組みにする */
+.manage-list li.channel-manage-item {
+  display: block;
+}
+.channel-manage-item.dragging { opacity: 0.4; }
+.channel-manage-item.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+.channel-manage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.channel-manage-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.channel-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  font-size: 14px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.channel-manage-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.manage-list .channel-manage-actions .move-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+}
+.manage-list .channel-manage-actions .move-btn:hover:not(:disabled) {
+  background: #2a2a2a;
+  color: var(--text);
+}
+.manage-list .channel-manage-actions .move-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.channel-manage-controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.channel-manage-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.channel-manage-controls input[type="number"] {
+  width: 56px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.player-section {
+  /* タブ（ウィンドウ）の幅に合わせてプレイヤーが大きくなるよう、
+     以前の固定上限(900px)を撤廃。超ワイドディスプレイで縦方向が
+     際限なく巨大化しないよう、実用上余裕のある上限のみ設定する。 */
+  max-width: 1600px;
+  margin: 16px auto;
+  padding: 0 20px;
+}
+#player, #player iframe { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; }
+#player-close {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.video-section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 20px;
+}
+.video-section h2 {
+  font-size: 16px;
+  margin: 8px 0 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.section-hint { font-size: 11px; color: var(--text-dim); font-weight: normal; }
+
+.news-refresh-btn {
+  padding: 4px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+}
+.news-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 「登録チャンネルの新着」セクションだけは他のセクション（News/お気に入り）より
+   幅の上限を広げ、チャンネルを横に複数並べられるようにする（.video-sectionの
+   max-width: 1200pxを上書き）。 */
+.channels-section {
+  max-width: 1600px;
+}
+
+/* 「登録チャンネルの新着」はチャンネルを均等幅の列に割り当てず、各チャンネルの
+   ブロック幅をその中の動画本数に応じた「自然な幅」にして（1行最大4枚まで。
+   app.js側で#chgrid-*要素にgrid-template-columnsをインラインで設定している）、
+   #channels-container（flex-wrap）で横方向にできるだけ詰めて並べる。
+   次のチャンネルが今の行の残り幅に収まらなければ、そこで空白を残して
+   次の行へ折り返す（隙間を埋めるための並べ替えはしない。無理に引き伸ばしもしない）。
+   どのチャンネルを上/下にするか（表示する動画があるチャンネルを上、
+   ないチャンネルを下にまとめる）はapp.js側で描画順を並べ替えて決めている。 */
+#channels-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+}
+.channel-block {
+  flex: 0 0 auto;
+}
+.channel-block h3 { font-size: 13px; color: var(--text-dim); margin: 0 0 8px; word-break: break-word; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.video-card {
+  cursor: pointer;
+  background: var(--surface);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.video-card:hover { border-color: var(--accent); }
+.video-card img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }
+.video-card .meta { padding: 8px 10px; }
+.video-card .title {
+  font-size: 13px;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.video-card .channel { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.video-card .stats { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+.video-card.is-watched { opacity: 0.55; }
+.video-card.is-watched:hover { opacity: 0.85; }
+
+.thumb-wrap { position: relative; }
+.watched-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+/* 動画の長さバッジ（YouTube本家のサムネイル右下表示に合わせている） */
+.duration-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-toggle-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.watch-toggle-btn:hover { background: #2a2a2a; color: var(--text); }
+
+.empty { color: var(--text-dim); font-size: 13px; }
+
+.app-footer {
+  text-align: center;
+  padding: 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
