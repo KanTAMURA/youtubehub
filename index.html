@@ -11,6 +11,7 @@
 <header class="app-header">
   <h1>YouTube Hub</h1>
   <label class="checkbox-inline header-watched-toggle"><input type="checkbox" id="show-watched-toggle" /> 視聴済みの動画も表示</label>
+  <button id="channels-toggle" class="icon-button" title="チャンネル管理">チャンネル管理</button>
   <button id="settings-toggle" class="icon-button" title="設定">設定</button>
 </header>
 
@@ -26,6 +27,7 @@
     <label for="api-key-input">YouTube Data API v3 キー</label>
     <input type="text" id="api-key-input" placeholder="AIza..." />
     <p class="hint">Google Cloud ConsoleでYouTube Data API v3を有効化して発行したAPIキーを貼り付けてください（README参照）。</p>
+    <button type="button" id="onboarding-reopen-btn" class="icon-button onboarding-reopen-btn">📋 初回チュートリアルをもう一度見る</button>
   </div>
 
   <div class="field">
@@ -41,21 +43,6 @@
 
   <div class="field">
     <label class="checkbox-inline"><input type="checkbox" id="video-stats-toggle" checked /> 動画の再生時間・再生数を表示する</label>
-    <p class="hint">「登録チャンネルの新着」「今日のニュース」のサムネイルに再生時間バッジ、説明欄に再生数（例：3.2万回視聴）を表示します。オンにするとYouTube Data APIの`videos.list`呼び出しが追加で発生します（表示対象の動画IDをまとめて渡すため、1回の更新あたり概ね+1〜3ユニット程度の見込みです）。</p>
-  </div>
-
-  <div class="field">
-    <label>登録チャンネル</label>
-    <form id="channel-add-form" class="inline-form">
-      <input type="text" id="channel-add-input" placeholder="チャンネルURL / @ハンドル / チャンネルID(UC...)" />
-      <label class="checkbox-inline"><input type="checkbox" id="channel-add-news" /> ニュース対象</label>
-      <label class="checkbox-inline"><input type="checkbox" id="channel-add-show-in-feed" checked /> 登録チャンネル一覧に表示</label>
-      <label class="number-inline">表示件数 <input type="number" id="channel-add-count" min="1" max="50" value="6" /></label>
-      <label class="number-inline">直近 <input type="number" id="channel-add-days" min="0" placeholder="制限なし" /> 日以内</label>
-      <button type="submit">追加</button>
-    </form>
-    <p class="hint">「登録チャンネル一覧に表示」をオフにすると、そのチャンネルは「登録チャンネルの新着」セクションには表示されず、ニュース対象にした場合はニュース欄のサジェスト元としてのみ使われます。「表示件数」は「登録チャンネルの新着」に並べる動画の最大本数、「直近n日以内」は公開からn日を超えた動画を除外する設定です（空欄なら期間の制限なし）。登録後もチャンネル一覧の各項目（表示件数・日数の変更、↑↓ボタンでの並べ替え）からいつでも変更できます。</p>
-    <ul id="channel-list" class="manage-list"></ul>
   </div>
 
   <div class="field">
@@ -70,6 +57,129 @@
   <p class="hint">設定はこのブラウザのlocalStorageにのみ保存されます（サーバー送信なし）。APIキーを他人と共有しないでください。</p>
 </section>
 
+<!-- チャンネル管理（登録チャンネルの追加・検索・一覧・並べ替え専用の扉）。
+     登録チャンネル数が増えると設定パネルが長大になるため、設定から分離している。 -->
+<div id="channels-backdrop" class="settings-backdrop" hidden></div>
+
+<section id="channels-panel" class="settings-panel">
+  <div class="settings-panel-header">
+    <h2>チャンネル管理</h2>
+    <button type="button" id="channels-close" class="icon-button" title="閉じる">✕</button>
+  </div>
+
+  <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌</p>
+
+  <div class="field">
+    <label>登録チャンネル</label>
+    <form id="channel-add-form" class="inline-form">
+      <input type="text" id="channel-add-input" placeholder="チャンネル名 / URL / @ハンドル / チャンネルID" />
+      <span id="channel-add-options" class="channel-add-options">
+        <label class="checkbox-inline"><input type="checkbox" id="channel-add-news" /> ニュース対象</label>
+        <label class="checkbox-inline"><input type="checkbox" id="channel-add-show-in-feed" checked /> 登録チャンネル一覧に表示</label>
+        <label class="number-inline">表示件数 <input type="number" id="channel-add-count" min="1" max="50" value="6" /></label>
+        <label class="number-inline">直近 <input type="number" id="channel-add-days" min="0" placeholder="制限なし" /> 日以内</label>
+      </span>
+      <button type="submit" id="channel-add-submit">追加</button>
+    </form>
+    <p class="detect-hint" id="channel-detect-hint">
+      <span class="tag" id="channel-detect-tag">待機中</span>
+      <span id="channel-detect-text">URL・@ハンドル・チャンネルID・チャンネル名、どれでも入力できます。</span>
+    </p>
+    <div id="channel-search-results" class="search-results"></div>
+    <ul id="channel-list" class="manage-list"></ul>
+  </div>
+</section>
+
+<!-- 初回チュートリアル（APIキー未設定の初回アクセス時のみ自動表示） -->
+<div id="onboarding-backdrop" class="onboarding-backdrop" hidden></div>
+
+<section id="onboarding-panel" class="onboard-card" hidden>
+  <div class="onboard-head">
+    <div class="onboard-badge">👋</div>
+    <div class="onboard-heads">
+      <p class="onboard-eyebrow">はじめての方へ・3ステップで完了</p>
+      <h2 id="onboard-step-title">YouTube Hub へようこそ</h2>
+    </div>
+    <button type="button" id="onboard-close" class="icon-button" title="閉じる（後でも設定できます）">✕</button>
+  </div>
+
+  <div class="onboard-progress">
+    <div class="dot" id="onboard-dot-1"></div>
+    <div class="dot" id="onboard-dot-2"></div>
+    <div class="dot" id="onboard-dot-3"></div>
+  </div>
+
+  <div class="onboard-body">
+
+    <!-- STEP 1: APIキーの入手 -->
+    <div class="onboard-step" id="onboard-step-1">
+      <p class="lead">このツールはあなた専用のGoogle APIキーで動きます（無料）。キーはこのブラウザだけに保存され、外部には送信されません。下のボタンから2ステップで取得できます。</p>
+
+      <a class="link-btn" href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">
+        <span class="step-flag">👉 はじめはココ！</span>
+        <span class="link-btn-row">
+          <span class="num">1</span>
+          <span class="lb-text">
+            <span class="lb-title">YouTube Data API v3 を有効化する</span>
+            <span class="lb-sub">Google Cloud Console が開きます（要Googleログイン）</span>
+          </span>
+          <span class="go">開く ↗</span>
+        </span>
+      </a>
+
+      <a class="link-btn" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">
+        <span class="step-flag">👉 次はココ！</span>
+        <span class="link-btn-row">
+          <span class="num">2</span>
+          <span class="lb-text">
+            <span class="lb-title">APIキーを作成する</span>
+            <span class="lb-sub">「＋認証情報を作成」→「APIキー」を選ぶだけ</span>
+          </span>
+          <span class="go">開く ↗</span>
+        </span>
+        <span class="lb-extra">📋 <b>開いたらAPIキーをコピーしてください。</b>次のステップで貼り付けます</span>
+      </a>
+
+      <p class="note">💡 初めてGoogle Cloudを使う場合、先にプロジェクトの作成を求められることがあります（無料）。表示された案内どおりに進めばOKです。</p>
+    </div>
+
+    <!-- STEP 2: キーの貼り付け -->
+    <div class="onboard-step" id="onboard-step-2" hidden>
+      <p class="lead">発行された「AIza...」から始まるキーを、下の欄に貼り付けてください。</p>
+      <div class="field">
+        <label for="onboard-api-key-input">YouTube Data API v3 キー</label>
+        <input type="text" id="onboard-api-key-input" placeholder="AIza..." />
+      </div>
+      <p class="note">🔒 このキーはこのブラウザのlocalStorageにのみ保存されます。サーバーには送信されません。</p>
+    </div>
+
+    <!-- STEP 3: 最初のチャンネル登録 -->
+    <div class="onboard-step" id="onboard-step-3" hidden>
+      <p class="lead">最後に、よく見るチャンネルを1つ登録してみましょう（後からいくつでも追加できます。ここはスキップしても大丈夫です）。</p>
+      <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌</p>
+      <form id="onboard-channel-form" class="inline-form">
+        <input type="text" id="onboard-channel-input" placeholder="チャンネル名 / URL / @ハンドル / チャンネルID" />
+        <button type="submit" id="onboard-channel-submit">追加</button>
+      </form>
+      <p class="detect-hint" id="onboard-channel-detect-hint">
+        <span class="tag" id="onboard-channel-detect-tag">待機中</span>
+        <span id="onboard-channel-detect-text">URL・@ハンドル・チャンネルID・チャンネル名、どれでも入力できます。</span>
+      </p>
+      <div id="onboard-channel-search-results" class="search-results"></div>
+      <p id="onboard-channel-status" class="hint"></p>
+    </div>
+
+  </div>
+
+  <div class="onboard-footer">
+    <button type="button" class="skip-link" id="onboard-skip">今はスキップする</button>
+    <div class="footer-actions">
+      <button type="button" class="icon-button" id="onboard-back" disabled>戻る</button>
+      <button type="button" class="icon-button primary" id="onboard-next">次へ</button>
+    </div>
+  </div>
+</section>
+
 <section id="player-section" class="player-section" hidden>
   <div id="player"></div>
   <button id="player-close">閉じる</button>
@@ -79,12 +189,12 @@
   <h2>今日のニュース <span class="section-hint">（リロードのたびに自動更新）</span>
     <button type="button" id="news-refresh-btn" class="icon-button news-refresh-btn" title="今日のニュースを今すぐ更新">更新</button>
   </h2>
-  <div class="grid" id="news-grid"><p class="empty">設定でAPIキーとニュース対象チャンネルを登録してください。</p></div>
+  <div class="grid" id="news-grid"><p class="empty">設定でAPIキーを、チャンネル管理でニュース対象チャンネルを登録してください。</p></div>
 </section>
 
 <section class="video-section channels-section">
   <h2>登録チャンネルの新着</h2>
-  <div id="channels-container"><p class="empty">設定でチャンネルを登録してください。</p></div>
+  <div id="channels-container"><p class="empty">チャンネル管理でチャンネルを登録してください。</p></div>
 </section>
 
 <section class="video-section">

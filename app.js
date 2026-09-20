@@ -39,7 +39,8 @@ const DEFAULT_STATE = {
   showVideoStats: true, // 動画の再生時間・再生数バッジを表示するか（オフならvideos.listを呼ばない）
   channels: [], // { id, title, uploadsPlaylistId, isNews, showInFeed, videoCount, daysLimit }
   favorites: [], // { videoId, title, thumbnail, channelTitle }
-  quota: { date: "", units: 0 }
+  quota: { date: "", units: 0 },
+  onboardingDismissed: false // 初回チュートリアルを一度でも閉じた（スキップ／完了／✕）かどうか
 };
 
 let state = loadState();
@@ -226,8 +227,244 @@ async function resolveChannel(raw) {
   return {
     id: item.id,
     title: item.snippet.title,
-    uploadsPlaylistId: item.contentDetails.relatedPlaylists.uploads
+    uploadsPlaylistId: item.contentDetails.relatedPlaylists.uploads,
+    thumbnail:
+      ((item.snippet.thumbnails && (item.snippet.thumbnails.default || item.snippet.thumbnails.medium)) || {})
+        .url || ""
   };
+}
+
+// ---------- チャンネル登録欄の入力自動判定・チャンネル名検索（search.list） ----------
+// URL（/channel/UC.../@ハンドル形式）・@ハンドル・チャンネルID(UC...)は「直接追加」（1ユニット）、
+// それ以外の文字列は「チャンネル名」とみなして検索（search.list、100ユニット）に振り分ける。
+function detectChannelInputMode(raw) {
+  const v = (raw || "").trim();
+  if (!v) return "idle";
+  if (/\/channel\/(UC[\w-]{20,})/.test(v)) return "id";
+  if (/\/@[\w.-]+/.test(v)) return "id";
+  if (/^UC[\w-]{20,}$/.test(v)) return "id";
+  if (v.startsWith("@")) return "id";
+  return "search";
+}
+
+function formatSubscriberCount(n) {
+  if (n == null) return "登録者数非公開";
+  if (n < 1000) return `登録者 ${n}人`;
+  if (n < 10000) return `登録者 ${trimTrailingZero(n / 1000)}千人`;
+  return `登録者 ${trimTrailingZero(n / 10000)}万人`;
+}
+
+// チャンネル名での検索。search.list（100ユニット）を1回、続けてchannels.list（1ユニット）を
+// 1回呼び、検索結果（最大5件）にチャンネルアイコン・登録者数を付与して返す。
+// ボタンを明示的に押したときだけ呼ばれる想定（キー入力のたびには呼ばない）。
+async function searchChannels(query) {
+  const searchData = await apiGet(
+    "search",
+    { part: "snippet", type: "channel", maxResults: 5, q: query },
+    100
+  );
+  const ids = (searchData.items || [])
+    .map((it) => it.id && it.id.channelId)
+    .filter(Boolean);
+  if (!ids.length) return [];
+  const detailData = await apiGet(
+    "channels",
+    { part: "snippet,statistics,contentDetails", id: ids.join(",") },
+    1
+  );
+  const detailById = new Map((detailData.items || []).map((it) => [it.id, it]));
+  return ids
+    .map((id) => {
+      const d = detailById.get(id);
+      if (!d || !d.contentDetails || !d.contentDetails.relatedPlaylists) return null;
+      const hidden = d.statistics && d.statistics.hiddenSubscriberCount;
+      return {
+        id,
+        title: d.snippet.title,
+        thumbnail:
+          ((d.snippet.thumbnails && (d.snippet.thumbnails.default || d.snippet.thumbnails.medium)) || {}).url || "",
+        subscriberCount: hidden ? null : Number((d.statistics && d.statistics.subscriberCount) || 0),
+        uploadsPlaylistId: d.contentDetails.relatedPlaylists.uploads
+      };
+    })
+    .filter(Boolean);
+}
+
+// 検索結果カード一式を描画する。「＋追加」を押すと、既存のチャンネル追加と同じ既定値
+// （ニュース対象：オフ、登録チャンネル一覧に表示：オン、表示件数・直近日数：既定値）で登録する。
+// buttonRegistry（channelId -> ボタン要素）に登録しておくことで、後からチャンネル一覧の
+// 「削除」を押したときに、対応する「＋追加」ボタンを元の状態へ戻せるようにする。
+// 検索結果カードの「アクション欄」（＋追加ボタン／表示件数・期間を選ぶバナー／登録済み表示の
+// 3状態）を1枚のスロット要素の中で切り替えるコントローラー。
+// 「＋追加」を押した直後はまだ登録せず、表示件数・直近日数を選んでから「登録する」で本登録する。
+function createResultActionController(slotEl, r, onRegistered) {
+  function renderIdle() {
+    slotEl.classList.remove("expanded");
+    slotEl.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "result-add-btn";
+    btn.textContent = "＋ 追加";
+    btn.addEventListener("click", renderForm);
+    slotEl.appendChild(btn);
+  }
+
+  function renderRegistered() {
+    slotEl.classList.remove("expanded");
+    slotEl.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "result-add-btn added";
+    btn.textContent = "登録済み";
+    btn.disabled = true;
+    slotEl.appendChild(btn);
+  }
+
+  function renderForm() {
+    slotEl.classList.add("expanded");
+    slotEl.innerHTML = `
+      <div class="result-add-options">
+        <label class="number-inline">表示件数
+          <input type="number" class="result-count-input" min="1" max="${MAX_CHANNEL_VIDEO_COUNT}" value="${DEFAULT_CHANNEL_VIDEO_COUNT}" />
+        </label>
+        <label class="number-inline">直近
+          <input type="number" class="result-days-input" min="0" placeholder="制限なし" /> 日以内
+        </label>
+        <span class="result-add-actions">
+          <button type="button" class="result-confirm-btn">登録する</button>
+          <button type="button" class="result-cancel-btn">キャンセル</button>
+        </span>
+      </div>
+    `;
+    const countInput = slotEl.querySelector(".result-count-input");
+    const daysInput = slotEl.querySelector(".result-days-input");
+    slotEl.querySelector(".result-cancel-btn").addEventListener("click", renderIdle);
+    slotEl.querySelector(".result-confirm-btn").addEventListener("click", () => {
+      if (state.channels.some((c) => c.id === r.id)) {
+        renderRegistered();
+        return;
+      }
+      const videoCount = Math.max(
+        1,
+        Math.min(MAX_CHANNEL_VIDEO_COUNT, Math.round(Number(countInput.value)) || DEFAULT_CHANNEL_VIDEO_COUNT)
+      );
+      const daysRaw = daysInput.value.trim();
+      let daysLimit = daysRaw === "" ? null : Math.max(0, Math.round(Number(daysRaw)));
+      if (daysLimit !== null && Number.isNaN(daysLimit)) daysLimit = null;
+      state.channels.push({
+        id: r.id,
+        title: r.title,
+        uploadsPlaylistId: r.uploadsPlaylistId,
+        thumbnail: r.thumbnail || "",
+        isNews: false,
+        showInFeed: true,
+        videoCount,
+        daysLimit
+      });
+      saveState();
+      renderRegistered();
+      renderChannelManageList();
+      refreshAll();
+      if (onRegistered) onRegistered(r);
+    });
+  }
+
+  if (state.channels.some((c) => c.id === r.id)) renderRegistered();
+  else renderIdle();
+
+  return { slotEl, reset: renderIdle };
+}
+
+function renderChannelSearchResults(container, buttonRegistry, results, onRegistered) {
+  buttonRegistry.clear();
+  container.innerHTML = "";
+  if (!results.length) {
+    container.innerHTML = `<p class="empty">チャンネルが見つかりませんでした。別のキーワードでお試しください。</p>`;
+    return;
+  }
+  results.forEach((r) => {
+    const card = document.createElement("div");
+    card.className = "result-card";
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar-thumb";
+    if (r.thumbnail) {
+      const img = document.createElement("img");
+      img.src = r.thumbnail;
+      img.alt = "";
+      img.addEventListener("error", () => {
+        img.remove();
+        avatar.textContent = (r.title[0] || "?").toUpperCase();
+        avatar.classList.add("avatar-fallback");
+      });
+      avatar.appendChild(img);
+    } else {
+      avatar.textContent = (r.title[0] || "?").toUpperCase();
+      avatar.classList.add("avatar-fallback");
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "result-meta";
+    meta.innerHTML = `
+      <div class="result-title">${escapeHtml(r.title)}</div>
+      <div class="result-subs">${escapeHtml(formatSubscriberCount(r.subscriberCount))}</div>
+    `;
+
+    const actionSlot = document.createElement("div");
+    actionSlot.className = "result-action-slot";
+
+    card.appendChild(avatar);
+    card.appendChild(meta);
+    card.appendChild(actionSlot);
+    container.appendChild(card);
+
+    const controller = createResultActionController(actionSlot, r, onRegistered);
+    buttonRegistry.set(r.id, controller);
+  });
+
+  const note = document.createElement("p");
+  note.className = "result-quota-note";
+  note.textContent = `検索結果 ${results.length} 件（search.list + channels.listで約101ユニット消費しました）`;
+  container.appendChild(note);
+}
+
+// チャンネル一覧で「削除」した際に、まだ画面に残っている検索結果のアクション欄が
+// 「登録済み」のまま固まらないよう、該当カードを見つけて「＋追加」の状態に戻す。
+// 設定パネル・初回チュートリアルの両方の検索結果欄を横断してチェックする。
+const searchResultButtonRegistries = [];
+function resetSearchResultButton(channelId) {
+  searchResultButtonRegistries.forEach((registry) => {
+    const entry = registry.get(channelId);
+    if (entry && entry.slotEl && entry.slotEl.isConnected) {
+      entry.reset();
+    }
+  });
+}
+
+// 入力欄の内容から判定したモードを、検出バッジ・案内文・送信ボタンのラベル・
+// （オプションが渡された場合は）オプション欄の表示/非表示へ反映する。
+function updateChannelDetectUI(raw, { hintEl, tagEl, textEl, submitBtn, optionsEl }) {
+  const mode = detectChannelInputMode(raw);
+  hintEl.classList.remove("mode-id", "mode-search");
+  if (mode === "id") {
+    hintEl.classList.add("mode-id");
+    tagEl.textContent = "URL/ID";
+    textEl.textContent = "URL・@ハンドル・チャンネルIDとして認識しました。そのまま追加します（1ユニット）。";
+    if (submitBtn) submitBtn.textContent = "追加";
+    if (optionsEl) optionsEl.hidden = false;
+  } else if (mode === "search") {
+    hintEl.classList.add("mode-search");
+    tagEl.textContent = "検索";
+    textEl.textContent = "チャンネル名として検索します（search.list・100ユニット）。";
+    if (submitBtn) submitBtn.textContent = "🔍 検索";
+    if (optionsEl) optionsEl.hidden = true;
+  } else {
+    tagEl.textContent = "待機中";
+    textEl.textContent = "URL・@ハンドル・チャンネルID・チャンネル名、どれでも入力できます。";
+    if (submitBtn) submitBtn.textContent = "追加";
+    if (optionsEl) optionsEl.hidden = false;
+  }
+  return mode;
 }
 
 function parseVideoInput(raw) {
@@ -693,22 +930,30 @@ function renderFavoritesGrid() {
   );
 }
 
-// ---------- 設定パネル ----------
+// ---------- 設定パネル／チャンネル管理パネル（右からスライドする扉式） ----------
+// スクロール位置に関係なく開けるよう、どちらもposition:fixedのドロワーとして実装している
+// （パネル自体はDOMに常時存在し、CSSのtransformで画面外に出し入れする）。
+// 登録チャンネルが増えると設定パネルが長大になるため、チャンネルの追加・一覧・並べ替えは
+// 「チャンネル管理」として設定から分離し、ヘッダーの専用ボタンから開く別の扉にしている。
 
-// ---------- 設定パネル（右からスライドする扉式） ----------
-// スクロール位置に関係なく開けるよう、position:fixedのドロワーとして実装している
-// （設定パネル自体はDOMに常時存在し、CSSのtransformで画面外に出し入れする）。
+// 設定パネル・チャンネル管理パネル・初回チュートリアルのうち、いずれか1つでも開いていれば
+// 背面スクロールを止める（複数の扉の開閉が絡んでも、状態を毎回まとめて判定するので崩れない）。
+function updateBodyScrollLock() {
+  const anyOpen = isSettingsOpen() || isChannelsOpen() || isOnboardingOpen();
+  document.body.classList.toggle("settings-open", anyOpen);
+}
 
 function openSettings() {
+  if (isChannelsOpen()) closeChannels();
   document.getElementById("settings-panel").classList.add("open");
   document.getElementById("settings-backdrop").hidden = false;
-  document.body.classList.add("settings-open");
+  updateBodyScrollLock();
 }
 
 function closeSettings() {
   document.getElementById("settings-panel").classList.remove("open");
   document.getElementById("settings-backdrop").hidden = true;
-  document.body.classList.remove("settings-open");
+  updateBodyScrollLock();
 }
 
 function isSettingsOpen() {
@@ -725,8 +970,62 @@ document.getElementById("settings-toggle").addEventListener("click", () => {
 
 document.getElementById("settings-close").addEventListener("click", closeSettings);
 document.getElementById("settings-backdrop").addEventListener("click", closeSettings);
+
+// チャンネル管理パネルを閉じたら、検索結果（チャンネル名検索でヒットした候補カード）を
+// 破棄する。登録チャンネル数が増えても検索結果が残り続けて長大化することがないように、
+// 開き直すたびに入力欄・検出バッジ・検索結果をまっさらな状態に戻す。
+function clearChannelSearchState() {
+  const resultsEl = document.getElementById("channel-search-results");
+  if (resultsEl) resultsEl.innerHTML = "";
+  channelAddButtonRegistry.clear();
+  const input = document.getElementById("channel-add-input");
+  if (input) input.value = "";
+  updateChannelDetectUI("", channelAddUiRefs);
+}
+
+async function openChannels() {
+  if (isSettingsOpen()) closeSettings();
+  document.getElementById("channels-panel").classList.add("open");
+  document.getElementById("channels-backdrop").hidden = false;
+  updateBodyScrollLock();
+  renderChannelManageList();
+  // アイコン未取得のチャンネルがあれば、まとめて1回のAPI呼び出しで補完してから再描画する
+  // （取得済みなら何もしない。開くたびに毎回APIを叩くわけではない）。
+  const updated = await backfillChannelThumbnails();
+  if (updated) renderChannelManageList();
+}
+
+function closeChannels() {
+  document.getElementById("channels-panel").classList.remove("open");
+  document.getElementById("channels-backdrop").hidden = true;
+  updateBodyScrollLock();
+  clearChannelSearchState();
+}
+
+function isChannelsOpen() {
+  return document.getElementById("channels-panel").classList.contains("open");
+}
+
+document.getElementById("channels-toggle").addEventListener("click", () => {
+  if (isChannelsOpen()) {
+    closeChannels();
+  } else {
+    openChannels();
+  }
+});
+
+document.getElementById("channels-close").addEventListener("click", closeChannels);
+document.getElementById("channels-backdrop").addEventListener("click", closeChannels);
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && isSettingsOpen()) closeSettings();
+  if (e.key !== "Escape") return;
+  if (isOnboardingOpen()) {
+    closeOnboarding();
+  } else if (isChannelsOpen()) {
+    closeChannels();
+  } else if (isSettingsOpen()) {
+    closeSettings();
+  }
 });
 
 function renderSettingsForm() {
@@ -734,7 +1033,6 @@ function renderSettingsForm() {
   document.getElementById("news-count-input").value = state.newsCount;
   document.getElementById("watch-ratio-input").value = state.watchCompletePercent ?? DEFAULT_WATCH_COMPLETE_PERCENT;
   document.getElementById("video-stats-toggle").checked = state.showVideoStats !== false;
-  renderChannelManageList();
   renderFavoriteManageList();
 }
 
@@ -742,6 +1040,14 @@ document.getElementById("api-key-input").addEventListener("change", (e) => {
   state.apiKey = e.target.value.trim();
   saveState();
   refreshAll();
+});
+
+// 一度閉じた初回チュートリアルを、設定パネルからいつでも見返せるようにするボタン。
+// openOnboarding()は後方（初回オンボーディングのセクション）で定義しているが、
+// 関数宣言は巻き上げられるため、記述順に関係なくここから呼び出せる。
+document.getElementById("onboarding-reopen-btn").addEventListener("click", () => {
+  closeSettings();
+  openOnboarding();
 });
 
 document.getElementById("news-count-input").addEventListener("change", (e) => {
@@ -827,12 +1133,67 @@ function renderChannelManageList() {
       li.classList.add("dragging");
     });
     dragHandle.addEventListener("dragend", () => li.classList.remove("dragging"));
+
+    // チャンネルアイコン（登録時に取得済み、または後述のbackfillChannelThumbnails()で
+    // 取得したサムネイルを表示。取得できていない場合は頭文字のフォールバック表示にする）。
+    const avatar = document.createElement("div");
+    avatar.className = "avatar-thumb channel-avatar";
+    if (ch.thumbnail) {
+      const img = document.createElement("img");
+      img.src = ch.thumbnail;
+      img.alt = "";
+      img.addEventListener("error", () => {
+        img.remove();
+        avatar.textContent = (ch.title[0] || "?").toUpperCase();
+        avatar.classList.add("avatar-fallback");
+      });
+      avatar.appendChild(img);
+    } else {
+      avatar.textContent = (ch.title[0] || "?").toUpperCase();
+      avatar.classList.add("avatar-fallback");
+    }
+
     const titleText = document.createElement("span");
     titleText.className = "channel-title-text";
     titleText.innerHTML = `${escapeHtml(ch.title)}${tags.length ? `（${tags.join("・")}）` : ""}`;
     titleWrap.appendChild(dragHandle);
+    titleWrap.appendChild(avatar);
     titleWrap.appendChild(titleText);
     row.appendChild(titleWrap);
+
+    // 表示件数・直近n日以内は、行を圧縮するためチャンネル名の隣にコンパクトに並べて表示する
+    // （以前は行を分けて表示していた）。
+    const inlineControls = document.createElement("div");
+    inlineControls.className = "channel-manage-controls-inline";
+    inlineControls.innerHTML = `
+      <label class="number-inline compact" title="登録チャンネルの新着に並べる最大本数">件数
+        <input type="number" class="ch-count-input" min="1" max="${MAX_CHANNEL_VIDEO_COUNT}"
+          value="${ch.videoCount ?? DEFAULT_CHANNEL_VIDEO_COUNT}" />
+      </label>
+      <label class="number-inline compact" title="公開からn日を超えた動画を除外（空欄なら制限なし）">直近
+        <input type="number" class="ch-days-input" min="0" placeholder="制限なし"
+          value="${ch.daysLimit ?? ""}" />日
+      </label>
+    `;
+    const countInput = inlineControls.querySelector(".ch-count-input");
+    countInput.addEventListener("change", (e) => {
+      const v = Math.max(1, Math.min(MAX_CHANNEL_VIDEO_COUNT, Math.round(Number(e.target.value)) || DEFAULT_CHANNEL_VIDEO_COUNT));
+      ch.videoCount = v;
+      e.target.value = v;
+      saveState();
+      renderChannelsFeed();
+    });
+    const daysInput = inlineControls.querySelector(".ch-days-input");
+    daysInput.addEventListener("change", (e) => {
+      const raw = e.target.value.trim();
+      let v = raw === "" ? null : Math.max(0, Math.round(Number(raw)));
+      if (v !== null && Number.isNaN(v)) v = null;
+      ch.daysLimit = v;
+      e.target.value = v ?? "";
+      saveState();
+      renderChannelsFeed();
+    });
+    row.appendChild(inlineControls);
 
     const actions = document.createElement("div");
     actions.className = "channel-manage-actions";
@@ -858,8 +1219,10 @@ function renderChannelManageList() {
     delBtn.className = "delete-btn";
     delBtn.textContent = "削除";
     delBtn.addEventListener("click", () => {
+      const removedId = ch.id;
       state.channels = state.channels.filter((c) => c.id !== ch.id);
       saveState();
+      resetSearchResultButton(removedId);
       renderChannelManageList();
       refreshAll();
     });
@@ -869,46 +1232,85 @@ function renderChannelManageList() {
     actions.appendChild(delBtn);
     row.appendChild(actions);
 
-    const controls = document.createElement("div");
-    controls.className = "channel-manage-controls";
-    controls.innerHTML = `
-      <label>表示件数
-        <input type="number" class="ch-count-input" min="1" max="${MAX_CHANNEL_VIDEO_COUNT}"
-          value="${ch.videoCount ?? DEFAULT_CHANNEL_VIDEO_COUNT}" />
-      </label>
-      <label>直近
-        <input type="number" class="ch-days-input" min="0" placeholder="制限なし"
-          value="${ch.daysLimit ?? ""}" /> 日以内
-      </label>
-    `;
-    const countInput = controls.querySelector(".ch-count-input");
-    countInput.addEventListener("change", (e) => {
-      const v = Math.max(1, Math.min(MAX_CHANNEL_VIDEO_COUNT, Math.round(Number(e.target.value)) || DEFAULT_CHANNEL_VIDEO_COUNT));
-      ch.videoCount = v;
-      e.target.value = v;
-      saveState();
-      renderChannelsFeed();
-    });
-    const daysInput = controls.querySelector(".ch-days-input");
-    daysInput.addEventListener("change", (e) => {
-      const raw = e.target.value.trim();
-      let v = raw === "" ? null : Math.max(0, Math.round(Number(raw)));
-      if (v !== null && Number.isNaN(v)) v = null;
-      ch.daysLimit = v;
-      e.target.value = v ?? "";
-      saveState();
-      renderChannelsFeed();
-    });
-
     li.appendChild(row);
-    li.appendChild(controls);
     ul.appendChild(li);
   });
 }
 
+// 登録チャンネルのアイコンを表示するための下準備。thumbnailをまだ持っていないチャンネル
+// （このアイコン表示機能を実装する前から登録されていたチャンネルなど）だけをまとめて
+// channels.listで取得する。IDをカンマ区切りで渡せば件数に関わらず1回の呼び出し＝1ユニット
+// で済む（50件を超える場合のみ50件ごとに分割し、その場合も1チャンクにつき1ユニット）。
+// 一度取得できたthumbnailはstateに保存されるため、この処理は基本的に初回のみ発生する。
+async function backfillChannelThumbnails() {
+  const missing = state.channels.filter((c) => !c.thumbnail);
+  if (!missing.length || !state.apiKey) return false;
+  let updated = false;
+  try {
+    for (let i = 0; i < missing.length; i += 50) {
+      const chunk = missing.slice(i, i + 50);
+      const data = await apiGet("channels", { part: "snippet", id: chunk.map((c) => c.id).join(",") }, 1);
+      const byId = new Map((data.items || []).map((it) => [it.id, it]));
+      chunk.forEach((c) => {
+        const item = byId.get(c.id);
+        const url =
+          item &&
+          ((item.snippet.thumbnails && (item.snippet.thumbnails.default || item.snippet.thumbnails.medium)) || {})
+            .url;
+        if (url) {
+          c.thumbnail = url;
+          updated = true;
+        }
+      });
+    }
+    if (updated) saveState();
+  } catch (err) {
+    // アイコン取得に失敗しても一覧自体は表示できるよう、エラーは無視して
+    // 頭文字のフォールバック表示に任せる。
+  }
+  return updated;
+}
+
+// 設定パネル「登録チャンネル」欄：入力欄1本化＋自動判定（B案）。
+// URL・@ハンドル・チャンネルIDならそのまま直接追加、チャンネル名らしき文字列なら
+// 「検索」ボタンとして振る舞い、search.listで検索して候補から選んで追加する。
+const channelAddButtonRegistry = new Map();
+searchResultButtonRegistries.push(channelAddButtonRegistry);
+
+const channelAddUiRefs = {
+  hintEl: document.getElementById("channel-detect-hint"),
+  tagEl: document.getElementById("channel-detect-tag"),
+  textEl: document.getElementById("channel-detect-text"),
+  submitBtn: document.getElementById("channel-add-submit"),
+  optionsEl: document.getElementById("channel-add-options")
+};
+document.getElementById("channel-add-input").addEventListener("input", (e) => {
+  updateChannelDetectUI(e.target.value, channelAddUiRefs);
+});
+updateChannelDetectUI("", channelAddUiRefs);
+
 document.getElementById("channel-add-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = document.getElementById("channel-add-input");
+  const raw = input.value.trim();
+  if (!raw) return;
+  const mode = detectChannelInputMode(raw);
+  const resultsEl = document.getElementById("channel-search-results");
+
+  if (mode === "search") {
+    resultsEl.classList.add("loading");
+    resultsEl.textContent = "検索中…";
+    try {
+      const results = await searchChannels(raw);
+      resultsEl.classList.remove("loading");
+      renderChannelSearchResults(resultsEl, channelAddButtonRegistry, results);
+    } catch (err) {
+      resultsEl.classList.remove("loading");
+      resultsEl.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    }
+    return;
+  }
+
   const isNews = document.getElementById("channel-add-news").checked;
   const showInFeed = document.getElementById("channel-add-show-in-feed").checked;
   const countInput = document.getElementById("channel-add-count");
@@ -920,8 +1322,6 @@ document.getElementById("channel-add-form").addEventListener("submit", async (e)
   const daysRaw = daysInput.value.trim();
   let daysLimit = daysRaw === "" ? null : Math.max(0, Math.round(Number(daysRaw)));
   if (daysLimit !== null && Number.isNaN(daysLimit)) daysLimit = null;
-  const raw = input.value.trim();
-  if (!raw) return;
   try {
     const ch = await resolveChannel(raw);
     if (state.channels.some((c) => c.id === ch.id)) {
@@ -935,6 +1335,8 @@ document.getElementById("channel-add-form").addEventListener("submit", async (e)
     document.getElementById("channel-add-show-in-feed").checked = true;
     countInput.value = DEFAULT_CHANNEL_VIDEO_COUNT;
     daysInput.value = "";
+    resultsEl.innerHTML = "";
+    updateChannelDetectUI("", channelAddUiRefs);
     renderChannelManageList();
     refreshAll();
   } catch (err) {
@@ -983,6 +1385,172 @@ document.getElementById("favorite-add-form").addEventListener("submit", async (e
   }
 });
 
+// ---------- 初回オンボーディング（チュートリアル） ----------
+// APIキーが未設定 かつ まだこのガイドを閉じたことがない「初回アクセス」時にだけ、
+// 「①APIキー取得 → ②貼り付け → ③チャンネル登録」の3ステップガイドを自動表示する。
+// スキップ／はじめる／✕のいずれで閉じても state.onboardingDismissed を保存し、
+// 以後は自動表示しない（設定パネルの「APIキー未設定なら自動的に開く」既存動作に代わって、
+// 初回だけはこちらを優先する）。
+// もう一度チュートリアルを見たい場合は、ブラウザの開発者ツールで
+// localStorageの yth_state_v1 内の onboardingDismissed を false に書き換えるか、
+// 設定をすべてクリアしてください（現時点では再表示ボタンは未実装）。
+
+let onboardStep = 1;
+const ONBOARD_STEP_TITLES = {
+  1: "YouTube Hub へようこそ",
+  2: "APIキーを貼り付けましょう",
+  3: "チャンネルを登録しましょう"
+};
+
+function isOnboardingOpen() {
+  return !document.getElementById("onboarding-panel").hidden;
+}
+
+function openOnboarding() {
+  onboardStep = 1;
+  document.getElementById("onboarding-backdrop").hidden = false;
+  document.getElementById("onboarding-panel").hidden = false;
+  updateBodyScrollLock(); // 背面スクロール停止は設定パネル・チャンネル管理パネルと同じ仕組みを流用
+  renderOnboardingStep();
+}
+
+// dismiss=falseは将来的な「あとで見る」用の予備（現状は常にtrueで呼ぶ）。
+function closeOnboarding({ dismiss = true } = {}) {
+  document.getElementById("onboarding-backdrop").hidden = true;
+  document.getElementById("onboarding-panel").hidden = true;
+  updateBodyScrollLock();
+  if (dismiss && !state.onboardingDismissed) {
+    state.onboardingDismissed = true;
+    saveState();
+  }
+}
+
+function renderOnboardingStep() {
+  for (let n = 1; n <= 3; n++) {
+    document.getElementById(`onboard-step-${n}`).hidden = n !== onboardStep;
+    const dot = document.getElementById(`onboard-dot-${n}`);
+    dot.classList.toggle("active", n === onboardStep);
+    dot.classList.toggle("done", n < onboardStep);
+  }
+  document.getElementById("onboard-step-title").textContent = ONBOARD_STEP_TITLES[onboardStep];
+  document.getElementById("onboard-back").disabled = onboardStep === 1;
+  document.getElementById("onboard-next").textContent = onboardStep === 3 ? "はじめる" : "次へ";
+  if (onboardStep === 2) {
+    document.getElementById("onboard-api-key-input").value = state.apiKey;
+  }
+}
+
+document.getElementById("onboard-next").addEventListener("click", () => {
+  // ステップ2→3に進むタイミングで、貼り付けられたAPIキーを本体の設定へ反映する
+  // （空欄のまま進んだ場合は変更しない＝後で設定パネルから入力できる）。
+  if (onboardStep === 2) {
+    const key = document.getElementById("onboard-api-key-input").value.trim();
+    if (key) {
+      state.apiKey = key;
+      saveState();
+      document.getElementById("api-key-input").value = key; // 設定パネル側の表示も同期
+    }
+  }
+  if (onboardStep < 3) {
+    onboardStep++;
+    renderOnboardingStep();
+  } else {
+    closeOnboarding();
+    refreshAll();
+  }
+});
+
+document.getElementById("onboard-back").addEventListener("click", () => {
+  if (onboardStep > 1) {
+    onboardStep--;
+    renderOnboardingStep();
+  }
+});
+
+document.getElementById("onboard-skip").addEventListener("click", () => {
+  closeOnboarding();
+  if (!state.apiKey) openSettings();
+});
+
+document.getElementById("onboard-close").addEventListener("click", () => {
+  closeOnboarding();
+  if (!state.apiKey) openSettings();
+});
+
+document.getElementById("onboarding-backdrop").addEventListener("click", () => {
+  closeOnboarding();
+  if (!state.apiKey) openSettings();
+});
+
+// ステップ3：チャンネル登録。設定パネルの「登録チャンネル」欄と同じ入力欄1本化＋自動判定
+// （B案）を使う。ニュース対象・表示件数などのオプションはここでは表示せず、既定値のまま
+// 登録する（細かい設定は後から設定パネルの「登録チャンネル」欄で変更できる）。
+const onboardChannelButtonRegistry = new Map();
+searchResultButtonRegistries.push(onboardChannelButtonRegistry);
+
+const onboardChannelUiRefs = {
+  hintEl: document.getElementById("onboard-channel-detect-hint"),
+  tagEl: document.getElementById("onboard-channel-detect-tag"),
+  textEl: document.getElementById("onboard-channel-detect-text"),
+  submitBtn: document.getElementById("onboard-channel-submit")
+};
+document.getElementById("onboard-channel-input").addEventListener("input", (e) => {
+  updateChannelDetectUI(e.target.value, onboardChannelUiRefs);
+});
+updateChannelDetectUI("", onboardChannelUiRefs);
+
+document.getElementById("onboard-channel-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("onboard-channel-input");
+  const status = document.getElementById("onboard-channel-status");
+  const raw = input.value.trim();
+  if (!raw) return;
+  const mode = detectChannelInputMode(raw);
+  const resultsEl = document.getElementById("onboard-channel-search-results");
+
+  if (mode === "search") {
+    status.textContent = "";
+    resultsEl.classList.add("loading");
+    resultsEl.textContent = "検索中…";
+    try {
+      const results = await searchChannels(raw);
+      resultsEl.classList.remove("loading");
+      renderChannelSearchResults(resultsEl, onboardChannelButtonRegistry, results, () => {
+        status.textContent = "登録しました。続けて他のチャンネルも追加できます。";
+      });
+    } catch (err) {
+      resultsEl.classList.remove("loading");
+      resultsEl.innerHTML = "";
+      status.textContent = err.message;
+    }
+    return;
+  }
+
+  status.textContent = "検索中…";
+  try {
+    const ch = await resolveChannel(raw);
+    if (state.channels.some((c) => c.id === ch.id)) {
+      status.textContent = `「${ch.title}」はすでに登録済みです。`;
+      return;
+    }
+    state.channels.push({
+      ...ch,
+      isNews: false,
+      showInFeed: true,
+      videoCount: DEFAULT_CHANNEL_VIDEO_COUNT,
+      daysLimit: null
+    });
+    saveState();
+    input.value = "";
+    status.textContent = `「${ch.title}」を登録しました。続けて他のチャンネルも追加できます。`;
+    resultsEl.innerHTML = "";
+    updateChannelDetectUI("", onboardChannelUiRefs);
+    renderChannelManageList();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
 // ---------- 初期化 ----------
 
 function refreshAll() {
@@ -994,8 +1562,11 @@ function refreshAll() {
 function init() {
   renderQuotaBadge();
   renderSettingsForm();
+  renderChannelManageList();
   refreshAll();
-  if (!state.apiKey) {
+  if (!state.apiKey && !state.onboardingDismissed) {
+    openOnboarding();
+  } else if (!state.apiKey) {
     openSettings();
   }
 }

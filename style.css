@@ -1,11 +1,21 @@
 :root {
-  --bg: #0f0f0f;
-  --surface: #181818;
-  --surface-2: #212121;
-  --text: #f1f1f1;
-  --text-dim: #aaaaaa;
-  --accent: #3ea6ff;
-  --border: #303030;
+  --bg: #0f0f10;
+  --bg-elevated: #161617;
+  --surface: #1a1a1c;
+  --surface-2: #232326;
+  --text: #f2f2f2;
+  --text-dim: #9d9da3;
+  --accent: #5eb8ff;
+  --accent-strong: #3ea6ff;
+  --accent-soft: rgba(94, 184, 255, 0.14);
+  --border: #2a2a2e;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 10px 24px rgba(0, 0, 0, 0.45);
+  --shadow-panel: -12px 0 32px rgba(0, 0, 0, 0.5);
+  --header-height: 65px;
   font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
 }
 
@@ -13,17 +23,23 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 480px at 50% -120px, rgba(94, 184, 255, 0.06), transparent 60%),
+    var(--bg);
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .app-header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
-  background: var(--surface);
+  padding: 14px 24px;
+  background: rgba(26, 26, 28, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -32,54 +48,79 @@ body {
 
 .app-header h1 {
   font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   margin: 0;
   white-space: nowrap;
+  background: linear-gradient(90deg, var(--text), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 /* スクロールしても操作できるよう、視聴済み表示のトグルはヘッダーに常設する */
 .header-watched-toggle {
   margin-left: auto;
   white-space: nowrap;
+  color: var(--text-dim);
 }
 
 .icon-button {
   padding: 8px 16px;
-  border-radius: 20px;
+  border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .icon-button:hover {
-  background: #2a2a2a;
+  background: #2a2a2e;
+  border-color: #3a3a3f;
+  transform: translateY(-1px);
 }
+.icon-button:active { transform: translateY(0); }
 
-/* 設定パネルは「扉」のように右からスライドして開くドロワーにする。
-   ページのどこまでスクロールしていても、設定ボタンを押せばすぐに操作できる。 */
+/* 設定パネル・チャンネル管理パネルは「扉」のように右からスライドして開くドロワーにする
+   （この.settings-panel/.settings-backdropは両方のパネルで共用している）。
+   ページのどこまでスクロールしていても、ヘッダーのボタンを押せばすぐに操作できる。
+   ヘッダーの高さ分だけ下から始まるようにして、扉を開いている間もヘッダー（設定／
+   チャンネル管理の切り替えボタンなど）が隠れず、常に押せる状態を保つ。 */
 .settings-panel {
   position: fixed;
-  top: 0;
+  top: var(--header-height);
   right: 0;
   bottom: 0;
   width: min(420px, 90vw);
   padding: 16px 20px 24px;
-  background: var(--surface);
+  background: var(--bg-elevated);
   border-left: 1px solid var(--border);
   overflow-y: auto;
   z-index: 100;
   transform: translateX(100%);
-  transition: transform 0.25s ease;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: var(--shadow-panel);
 }
 .settings-panel.open {
   transform: translateX(0);
 }
 
+/* チャンネル管理パネルは、アイコン・チャンネル名・表示件数・直近n日を1行に収めるため、
+   設定パネルより少し広めにしている（行を圧縮できる分、扉の横幅は広がってもよい）。 */
+#channels-panel {
+  width: min(560px, 92vw);
+}
+
 .settings-backdrop {
   position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  top: var(--header-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
   z-index: 90;
 }
 
@@ -92,25 +133,43 @@ body.settings-open {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .settings-panel-header h2 { margin: 0; font-size: 15px; }
 .settings-panel-header .icon-button {
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
-.field { margin-bottom: 18px; }
+.field { margin-bottom: 20px; }
 .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .field input[type="text"],
 .field input[type="number"] {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field input[type="text"]:focus,
+.field input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .hint { font-size: 11px; color: var(--text-dim); margin: 6px 0 0; }
+
+/* 設定パネルのAPIキー欄から、初回チュートリアルを見返すためのボタン
+   （.icon-buttonの見た目はそのまま、フィールド内に収まるよう少し小さくしている）。 */
+.onboarding-reopen-btn {
+  display: block;
+  margin-top: 10px;
+  padding: 6px 14px;
+  font-size: 12px;
+}
 
 .inline-form {
   display: flex;
@@ -121,14 +180,17 @@ body.settings-open {
 }
 .inline-form input[type="text"] { flex: 1; min-width: 200px; }
 .inline-form button {
-  padding: 8px 14px;
-  border-radius: 6px;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
   border: none;
-  background: var(--accent);
-  color: #041322;
-  font-weight: 600;
+  background: var(--accent-strong);
+  color: #04121f;
+  font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
+.inline-form button:hover { background: var(--accent); transform: translateY(-1px); }
+.inline-form button:active { transform: translateY(0); }
 .checkbox-inline { font-size: 12px; display: flex; align-items: center; gap: 4px; }
 .number-inline { font-size: 12px; display: flex; align-items: center; gap: 4px; }
 .number-inline input[type="number"] {
@@ -140,26 +202,196 @@ body.settings-open {
   color: var(--text);
 }
 
+/* 登録チャンネル欄：入力欄1本化＋自動判定（B案）。
+   #channel-add-optionsは<span>でオプション群をまとめているが、親.inline-formの
+   flexレイアウトに素通しさせるためdisplay:contentsにする（hidden指定時はUAスタイルの
+   [hidden]{display:none}をそのまま効かせたいので、not([hidden])の場合のみ適用する）。 */
+.channel-add-options:not([hidden]) { display: contents; }
+
+/* 「＠ハンドル等を直接入力するとAPI消費が1/100で済む」というお得情報を、ポップな雰囲気で
+   目立たせるための吹き出し風の帯。アクセントカラー2色のグラデーションと丸バッジで
+   説明文っぽくなりすぎないようにしている。 */
+.quota-tip {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(94, 184, 255, 0.16), rgba(255, 184, 92, 0.16));
+  border: 1px solid var(--accent-soft);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.quota-tip b { color: var(--accent); }
+.quota-tip .tip-badge {
+  display: inline-block;
+  padding: 1px 9px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: #04121f;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.detect-hint {
+  font-size: 11px;
+  margin: 8px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  transition: color 0.15s ease;
+}
+.detect-hint .tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.detect-hint.mode-id .tag { background: var(--accent-soft); color: var(--accent); }
+.detect-hint.mode-search .tag { background: rgba(255, 184, 92, 0.16); color: #ffb85c; }
+
+.search-results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.search-results.loading { color: var(--text-dim); font-size: 12.5px; padding: 8px 2px; }
+.search-results .empty { font-size: 12.5px; color: var(--text-dim); padding: 8px 2px; margin: 0; }
+.result-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+.result-card:hover { border-color: var(--accent); }
+.avatar-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+.avatar-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-thumb.avatar-fallback { background: var(--accent-strong); color: #04121f; }
+.result-meta { flex: 1; min-width: 0; }
+.result-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.result-subs { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.result-add-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.result-add-btn:hover:not(:disabled) { background: var(--accent-strong); color: #04121f; }
+.result-add-btn.added {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* 検索結果の「＋追加」を押した直後に表示する、表示件数・直近日数を選んでから
+   本登録するためのバナー。.result-action-slot.expandedのときにカード幅いっぱいに
+   広がり、次の行へ折り返す（.result-cardのflex-wrap: wrapと対になる）。 */
+.result-action-slot { flex-shrink: 0; }
+.result-action-slot.expanded { flex: 1 1 100%; }
+.result-add-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.result-add-options .number-inline input[type="number"] { width: 56px; }
+.result-add-actions { display: flex; gap: 6px; margin-left: auto; }
+.result-confirm-btn {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent-strong);
+  color: #04121f;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.result-confirm-btn:hover { background: var(--accent); }
+.result-cancel-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.result-cancel-btn:hover { border-color: var(--text-dim); color: var(--text); }
+
+.result-quota-note {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
 .manage-list { list-style: none; padding: 0; margin: 8px 0 0; }
 .manage-list li {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: var(--surface-2);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   margin-bottom: 6px;
   font-size: 13px;
+  transition: border-color 0.15s ease;
 }
+.manage-list li:hover { border-color: var(--border); }
 .manage-list button {
   background: none;
   border: none;
-  color: #ff6b6b;
+  color: #ff7a7a;
   cursor: pointer;
   font-size: 12px;
 }
 
-/* チャンネル管理リストは「表示件数」「直近n週間」の編集欄を持つため2段組みにする */
+/* チャンネル管理リストは1行の中にアイコン・チャンネル名・表示件数・直近n日・並べ替え／削除を
+   すべて収める、圧縮した1段組みレイアウトにしている（登録チャンネルが増えても縦に長くなり
+   すぎないように）。入りきらない幅では.channel-manage-rowのflex-wrapで自然に折り返す。 */
 .manage-list li.channel-manage-item {
   display: block;
 }
@@ -168,15 +400,17 @@ body.settings-open {
 
 .channel-manage-row {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
 }
 .channel-manage-title-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
   overflow: hidden;
+  flex: 1 1 140px;
+  min-width: 0;
 }
 .channel-title-text {
   overflow: hidden;
@@ -191,11 +425,44 @@ body.settings-open {
   user-select: none;
 }
 .drag-handle:active { cursor: grabbing; }
+
+/* チャンネル一覧のアイコンは検索結果より一回り小さく表示する */
+.avatar-thumb.channel-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.channel-manage-controls-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.channel-manage-controls-inline label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.channel-manage-controls-inline input[type="number"] {
+  width: 42px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
 .channel-manage-actions {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 .manage-list .channel-manage-actions .move-btn {
   background: none;
@@ -208,36 +475,15 @@ body.settings-open {
   padding: 0;
   cursor: pointer;
   font-size: 12px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .manage-list .channel-manage-actions .move-btn:hover:not(:disabled) {
-  background: #2a2a2a;
+  background: #2a2a2e;
   color: var(--text);
 }
 .manage-list .channel-manage-actions .move-btn:disabled {
   opacity: 0.3;
   cursor: default;
-}
-.channel-manage-controls {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.channel-manage-controls label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.channel-manage-controls input[type="number"] {
-  width: 56px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
 }
 
 .player-section {
@@ -248,25 +494,35 @@ body.settings-open {
   margin: 16px auto;
   padding: 0 20px;
 }
-#player, #player iframe { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; }
+#player, #player iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card-hover);
+}
 #player-close {
-  margin-top: 8px;
-  padding: 6px 14px;
-  border-radius: 6px;
+  margin-top: 10px;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   cursor: pointer;
+  transition: background 0.15s ease;
 }
+#player-close:hover { background: #2a2a2e; }
 
 .video-section {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 16px 20px;
+  padding: 20px 20px;
 }
 .video-section h2 {
   font-size: 16px;
-  margin: 8px 0 12px;
+  font-weight: 700;
+  margin: 8px 0 14px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -303,38 +559,53 @@ body.settings-open {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 24px;
+  gap: 28px;
 }
 .channel-block {
   flex: 0 0 auto;
 }
-.channel-block h3 { font-size: 13px; color: var(--text-dim); margin: 0 0 8px; word-break: break-word; }
+.channel-block h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+  word-break: break-word;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
 
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .video-card {
   cursor: pointer;
   background: var(--surface);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.video-card:hover { border-color: var(--accent); }
+.video-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-card-hover);
+}
 .video-card img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }
-.video-card .meta { padding: 8px 10px; }
+.video-card .meta { padding: 10px 12px 12px; }
 .video-card .title {
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.video-card .channel { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.video-card .channel { font-size: 11px; color: var(--text-dim); margin-top: 5px; }
 .video-card .stats { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
 .video-card.is-watched { opacity: 0.55; }
@@ -343,23 +614,24 @@ body.settings-open {
 .thumb-wrap { position: relative; }
 .watched-badge {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 8px;
+  left: 8px;
   background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(2px);
   color: #fff;
   font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
 }
 /* 動画の長さバッジ（YouTube本家のサムネイル右下表示に合わせている） */
 .duration-badge {
   position: absolute;
-  bottom: 6px;
-  right: 6px;
+  bottom: 8px;
+  right: 8px;
   background: rgba(0, 0, 0, 0.8);
   color: #fff;
   font-size: 10px;
-  padding: 2px 6px;
+  padding: 3px 7px;
   border-radius: 4px;
   font-variant-numeric: tabular-nums;
 }
@@ -367,23 +639,225 @@ body.settings-open {
 .watch-toggle-btn {
   display: block;
   width: 100%;
-  margin-top: 8px;
-  padding: 5px 6px;
+  margin-top: 10px;
+  padding: 6px 6px;
   font-size: 11px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-dim);
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.watch-toggle-btn:hover { background: #2a2a2a; color: var(--text); }
+.watch-toggle-btn:hover { background: #2a2a2e; color: var(--text); }
 
 .empty { color: var(--text-dim); font-size: 13px; }
 
 .app-footer {
   text-align: center;
-  padding: 14px;
+  padding: 16px;
   color: var(--text-dim);
   font-size: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* ==== 初回チュートリアル（オンボーディング） ====
+   APIキー未設定の初回アクセス時のみ、中央モーダルとして自動表示する
+   （右からスライドする設定パネルとは別物。settings-panel/backdropの仕組みは流用せず、
+   独立したbackdrop+cardとして実装している）。 */
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 190;
+}
+
+.onboard-card {
+  /* チュートリアルだけダッシュボード本体（ダーク基調）とは切り離し、白地の明るい配色にする。
+     ここでCSS変数を上書きすると、この要素の内側（.field・.icon-button・.link-btn等、
+     ダッシュボード本体と共用しているクラスも含む）はすべて自動的にこの配色を継承する。 */
+  --bg-elevated: #ffffff;
+  --surface: #f7f8fa;
+  --surface-2: #eef1f5;
+  --text: #1c1d1f;
+  --text-dim: #6b6f76;
+  --border: #e1e4e9;
+  --accent-soft: rgba(62, 166, 255, 0.12);
+
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(20, 24, 32, 0.35);
+  z-index: 200;
+}
+
+.onboard-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+.onboard-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.onboard-heads { flex: 1; }
+.onboard-eyebrow {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  margin: 0 0 2px;
+}
+.onboard-head h2 { font-size: 17px; margin: 0; }
+
+.onboard-progress {
+  display: flex;
+  gap: 6px;
+  padding: 16px 24px 0;
+}
+.onboard-progress .dot {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--surface-2);
+  transition: background 0.2s ease;
+}
+.onboard-progress .dot.done,
+.onboard-progress .dot.active { background: var(--accent-strong); }
+
+.onboard-body { padding: 18px 24px 4px; min-height: 240px; }
+.onboard-step .lead { margin: 0 0 14px; font-size: 13.5px; color: var(--text-dim); }
+
+.onboard-body .note {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-top: 12px;
+}
+
+.link-btn {
+  /* 「押しても押さなくてもいい項目」に見えないよう、ホバー時だけでなく常時
+     アクセントカラーの縁取り＋薄い塗りつぶしにして、明確にクリックすべき
+     ボタンだと分かるようにしている（.step-flagの「はじめはココ」等と合わせて）。 */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 14px 14px 12px;
+  margin-top: 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.link-btn:hover {
+  border-color: var(--accent-strong);
+  transform: translateY(-1px);
+  background: rgba(62, 166, 255, 0.2);
+  box-shadow: 0 6px 16px rgba(62, 166, 255, 0.25);
+}
+.link-btn-row { display: flex; align-items: center; gap: 12px; }
+
+/* ボタンの左上にはみ出す「付箋」風のフランクな一言。①②の順番だけでなく、
+   フキダシで背中を押すことで「選ばなくてもいい選択肢」に見えないようにする。 */
+.link-btn .step-flag {
+  position: absolute;
+  top: -12px;
+  left: 14px;
+  background: var(--accent-strong);
+  color: #04121f;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  animation: step-flag-bounce 1.8s ease-in-out infinite;
+}
+.link-btn:nth-of-type(1) .step-flag { transform: rotate(-4deg); }
+.link-btn:nth-of-type(2) .step-flag { transform: rotate(3deg); }
+
+@keyframes step-flag-bounce {
+  0%, 100% { margin-top: 0; }
+  50% { margin-top: -3px; }
+}
+.link-btn .num {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.link-btn .lb-text { flex: 1; display: block; }
+.link-btn .lb-title { display: block; font-size: 13.5px; font-weight: 600; }
+.link-btn .lb-sub { display: block; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.link-btn .go { font-size: 12px; color: var(--accent); white-space: nowrap; }
+.link-btn .lb-extra {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 11.5px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.link-btn .lb-extra b { color: var(--text); }
+
+.onboard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px 22px;
+}
+.skip-link {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.skip-link:hover { color: var(--text); }
+.onboard-footer .footer-actions { display: flex; gap: 8px; }
+
+/* 設定パネル等で使っている.icon-buttonに、オンボーディングの「次へ/はじめる」用の
+   強調（アクセントカラー塗りつぶし）バリエーションを追加する。 */
+.icon-button.primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #04121f;
+  font-weight: 700;
+}
+.icon-button.primary:hover { background: var(--accent); }
+.icon-button:disabled { opacity: 0.35; cursor: default; transform: none; }
