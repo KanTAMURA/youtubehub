@@ -1,5 +1,5 @@
 // app.js
-// YouTube Hub ダッシュボードの本体。
+// UnDop ダッシュボードの本体。
 // 設定（APIキー・登録チャンネル・お気に入り動画）はすべて localStorage に保存する
 // （このPCのこのブラウザだけに閉じた情報。サーバーには送らない）。
 //
@@ -41,6 +41,8 @@ const DEFAULT_WATCH_COMPLETE_PERCENT = 90; // 再生時間の何%見たら「視
 
 const DEFAULT_STATE = {
   apiKey: "",
+  theme: "dark", // "dark" | "light"。index.html冒頭の即時実行スクリプトでも同じキーを読むため、
+                 // ここでのキー名（theme）・既定値（dark）を変更する場合は両方を合わせて直すこと。
   newsCount: 3,
   watchCompletePercent: DEFAULT_WATCH_COMPLETE_PERCENT,
   showVideoStats: true, // 動画の再生時間・再生数バッジを表示するか（オフならvideos.listを呼ばない）
@@ -1017,6 +1019,7 @@ function closeSettings() {
   document.getElementById("settings-panel").classList.remove("open");
   document.getElementById("settings-backdrop").hidden = true;
   updateBodyScrollLock();
+  collapseTransferDetails(); // 次に設定を開いたときは省スペースな折りたたみ状態から始まるようにする
 }
 
 function isSettingsOpen() {
@@ -1093,16 +1096,32 @@ document.addEventListener("keydown", (e) => {
 
 function renderSettingsForm() {
   document.getElementById("api-key-input").value = state.apiKey;
+  document.getElementById("theme-switch-input").checked = state.theme === "light";
   document.getElementById("news-count-input").value = state.newsCount;
   document.getElementById("watch-ratio-input").value = state.watchCompletePercent ?? DEFAULT_WATCH_COMPLETE_PERCENT;
   document.getElementById("video-stats-toggle").checked = state.showVideoStats !== false;
   renderFavoriteManageList();
 }
 
+// 外観（ダーク／ライト）の適用。<html>のdata-theme属性を付け替えるだけで、
+// style.css側の:root[data-theme="light"]ブロックがCSS変数を丸ごと上書きする。
+// index.html冒頭の即時実行スクリプトが初回描画前に一度適用済みだが、
+// state読み込み後にもここで改めて揃えておく（念のための防御）。
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+}
+applyTheme(state.theme);
+
 document.getElementById("api-key-input").addEventListener("change", (e) => {
   state.apiKey = e.target.value.trim();
   saveState();
   refreshAll();
+});
+
+document.getElementById("theme-switch-input").addEventListener("change", (e) => {
+  state.theme = e.target.checked ? "light" : "dark";
+  applyTheme(state.theme);
+  saveState();
 });
 
 // 一度閉じた初回チュートリアルを、設定パネルからいつでも見返せるようにするボタン。
@@ -1449,6 +1468,368 @@ document.getElementById("favorite-add-form").addEventListener("submit", async (e
   }
 });
 
+// ---------- 他の端末への引き継ぎ（エクスポート/インポート） ----------
+// 「同期」ではなく、必要なときに手動でコピーする方式。サーバーには一切送らず、
+// この端末のブラウザ内で完結する（コピー／QRコード／ファイル保存のいずれも、
+// 生成したテキストをその場で表示・書き出すだけ）。
+// 対象：登録チャンネル・お気に入り・ニュース件数などの表示設定・（チェックがあれば）
+// APIキー・視聴済み履歴。取り込み側は基本的に「上書き」（画面表示に関わる設定・
+// チャンネル・お気に入り・APIキー）だが、視聴済み履歴だけは両端末の記録を残したいので
+// 「合算（マージ）」する。
+
+const TRANSFER_SCHEMA_TYPE = "youtube-hub-transfer";
+const TRANSFER_SCHEMA_VERSION = 1;
+// QRコードは詰め込みすぎると読み取りにくくなる（機種・カメラ性能にも左右される）ため、
+// 実用上安定して読み取れる目安としてこのバイト数（QRに実際に載せる文字列＝下記の
+// 圧縮に対応していれば圧縮後の文字列、非対応ならJSONそのものの長さ）を上限にする。
+// 超える場合はQR表示を諦め、コピー／共有／ファイル保存を案内する。
+const QR_SAFE_BYTE_LIMIT = 1200;
+
+// vendor/qrcode.jsの既定のstringToBytesは1文字=1バイト（c & 0xff）への変換しかせず、
+// 日本語（登録チャンネル名等）を含む文字列をそのまま渡すと文字化けする不具合があった。
+// UTF-8変換に差し替えることで解消する（ASCII文字は結果が変わらないため、後述の
+// Base64文字列を渡す場合にも影響しない＝常時この設定のままでよい）。
+if (typeof qrcode !== "undefined" && qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs["UTF-8"]) {
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+}
+
+// ---------- gzip圧縮（QRコードに載せるデータ量を減らすため） ----------
+// CompressionStream/DecompressionStreamは追加ライブラリ不要のブラウザ標準API
+// （目安：Chrome 80+、Firefox 113+、Safari 16.4+）。非対応の古いブラウザでは
+// 圧縮をあきらめ、そのままのJSONをQRに載せる（下記showTransferQr内でfallback）。
+const GZIP_QR_PREFIX = "YTHGZ1:"; // この接頭辞付きの文字列は「Base64化されたgzip圧縮データ」を意味する
+
+function supportsGzipStreams() {
+  return typeof CompressionStream === "function" && typeof DecompressionStream === "function";
+}
+
+// Uint8Array <-> Base64。btoa/atobは文字コード0〜255の文字列を前提とするため、
+// バイト列を1バイトずつ文字コードへ変換してから使う（今回のデータ量＝最大でも
+// 数KB程度なら、この単純な実装でスタックサイズ等の問題は起きない）。
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function gzipCompressToBase64(text) {
+  const inputBytes = new TextEncoder().encode(text);
+  const cs = new CompressionStream("gzip");
+  const writer = cs.writable.getWriter();
+  writer.write(inputBytes);
+  writer.close();
+  const compressed = await new Response(cs.readable).arrayBuffer();
+  return bytesToBase64(new Uint8Array(compressed));
+}
+
+async function gunzipBase64ToText(base64) {
+  const bytes = base64ToBytes(base64);
+  const ds = new DecompressionStream("gzip");
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const decompressed = await new Response(ds.readable).arrayBuffer();
+  return new TextDecoder().decode(decompressed);
+}
+
+// ---------- 他の端末へ直接共有（Web Share API） ----------
+// 対応環境（主にモバイルのChrome/Safari）では、OS標準の共有シート
+// （AirDrop・近くのシェア・Bluetooth・メッセージアプリ等）を直接呼び出せるため、
+// QRコードのようなデータ量の制約を受けずに引き継ぎデータを渡せる。非対応の
+// デスクトップブラウザ等ではボタン自体を表示しない（HTML側はhidden属性つきで用意）。
+function supportsFileShare() {
+  if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return false;
+  try {
+    const testFile = new File(["test"], "test.json", { type: "application/json" });
+    return navigator.canShare({ files: [testFile] });
+  } catch (e) {
+    return false;
+  }
+}
+
+async function shareTransferPayload() {
+  const statusEl = document.getElementById("transfer-export-status");
+  const payload = getTransferPayloadFromForm();
+  const text = JSON.stringify(payload, null, 2);
+  const ts = payload.exportedAt.replace(/[:.]/g, "-");
+  const file = new File([text], `undop-transfer-${ts}.json`, { type: "application/json" });
+  try {
+    await navigator.share({
+      files: [file],
+      title: "UnDop 引き継ぎデータ",
+      text: "UnDopの設定・登録チャンネルの引き継ぎデータです。"
+    });
+    statusEl.textContent = "共有しました。";
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // 共有シートをキャンセルしただけの場合は何もしない
+    statusEl.textContent = "共有に失敗しました。「コピー」または「ファイル保存」をお試しください。";
+  }
+}
+
+// includeApiKey: APIキーを含めるか。APIキーはstateではなく設定パネルの入力欄から直接
+// 読む（値を変更した直後、changeイベント発火前＝まだstateに未保存の状態でも、
+// 表示されている最新の内容をそのまま引き継げるようにするため）。
+function buildTransferPayload(includeApiKey, includeWatched) {
+  const payload = {
+    type: TRANSFER_SCHEMA_TYPE,
+    version: TRANSFER_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    newsCount: state.newsCount,
+    watchCompletePercent: state.watchCompletePercent,
+    showVideoStats: state.showVideoStats,
+    channels: state.channels,
+    favorites: state.favorites
+  };
+  if (includeApiKey) {
+    const liveKeyInput = document.getElementById("api-key-input");
+    payload.apiKey = (liveKeyInput ? liveKeyInput.value.trim() : "") || state.apiKey;
+  }
+  if (includeWatched) payload.watched = watchedMap;
+  return payload;
+}
+
+function transferPayloadSize(payload) {
+  return new Blob([JSON.stringify(payload)]).size;
+}
+
+function getTransferPayloadFromForm() {
+  const includeApiKey = document.getElementById("transfer-include-apikey").checked;
+  const includeWatched = document.getElementById("transfer-include-watched").checked;
+  return buildTransferPayload(includeApiKey, includeWatched);
+}
+
+// 取り込み側の適用処理。channels/favorites/apiKey/表示設定は「上書き」、
+// 視聴済み履歴（watched）だけは既存の記録と合算する（取り込んだ側の記録が優先。
+// 同じ動画IDがあれば取り込んだ側のwatchedAtで上書きするが、実用上の影響はほぼない）。
+function applyTransferPayload(payload) {
+  if (!payload || payload.type !== TRANSFER_SCHEMA_TYPE || !Array.isArray(payload.channels)) {
+    throw new Error("形式が正しくないデータです（UnDopの引き継ぎデータではない可能性があります）。");
+  }
+  if (typeof payload.apiKey === "string" && payload.apiKey) state.apiKey = payload.apiKey;
+  if (typeof payload.newsCount === "number") state.newsCount = payload.newsCount;
+  if (typeof payload.watchCompletePercent === "number") state.watchCompletePercent = payload.watchCompletePercent;
+  if (typeof payload.showVideoStats === "boolean") state.showVideoStats = payload.showVideoStats;
+  state.channels = Array.isArray(payload.channels) ? payload.channels : state.channels;
+  state.favorites = Array.isArray(payload.favorites) ? payload.favorites : state.favorites;
+  state.onboardingDismissed = true;
+  saveState();
+
+  if (payload.watched && typeof payload.watched === "object") {
+    watchedMap = { ...watchedMap, ...payload.watched };
+    saveWatchedMap();
+  }
+
+  // チャンネルの取得結果・埋め込み可否のセッションキャッシュは古い端末のものと
+  // 混ざらないよう破棄し、次回描画時に取り直す。
+  channelVideosCache.clear();
+  embeddableCache.clear();
+}
+
+async function copyTransferPayload() {
+  const statusEl = document.getElementById("transfer-export-status");
+  const payload = getTransferPayloadFromForm();
+  const text = JSON.stringify(payload);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      throw new Error("clipboard API unavailable");
+    }
+    statusEl.textContent = "コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。";
+  } catch (e) {
+    // クリップボードAPIが使えない環境（権限拒否・非対応ブラウザ等）向けのフォールバック。
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand("copy");
+      statusEl.textContent = "コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。";
+    } catch (e2) {
+      statusEl.textContent = "コピーに失敗しました。「ファイル保存」をお試しください。";
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
+
+function downloadTransferPayload() {
+  const statusEl = document.getElementById("transfer-export-status");
+  const payload = getTransferPayloadFromForm();
+  const text = JSON.stringify(payload, null, 2);
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const ts = payload.exportedAt.replace(/[:.]/g, "-");
+  a.href = url;
+  a.download = `undop-transfer-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  statusEl.textContent = "ファイルを保存しました。他の端末で「ファイルを選択」から読み込んでください。";
+}
+
+async function showTransferQr() {
+  const statusEl = document.getElementById("transfer-export-status");
+  const wrap = document.getElementById("transfer-qr-wrap");
+  const canvas = document.getElementById("transfer-qr-canvas");
+  const payload = getTransferPayloadFromForm();
+  const jsonText = JSON.stringify(payload);
+
+  // 対応ブラウザではgzip圧縮＋Base64化してからQRに載せることで、同じ見た目の複雑さで
+  // より多くの登録チャンネル・お気に入りを詰め込めるようにする。ただし、登録チャンネルが
+  // 少ないなど元データが小さい場合はgzipのヘッダー分のオーバーヘッドで逆に大きくなることが
+  // あるため、圧縮後のほうが実際に小さい場合のみ採用する（圧縮に失敗した場合・非対応
+  // ブラウザでは、従来どおり非圧縮のJSONをそのまま使う）。
+  let qrText = jsonText;
+  let compressed = false;
+  if (supportsGzipStreams()) {
+    try {
+      const candidate = GZIP_QR_PREFIX + (await gzipCompressToBase64(jsonText));
+      if (candidate.length < jsonText.length) {
+        qrText = candidate;
+        compressed = true;
+      }
+    } catch (e) {
+      // 圧縮に失敗した場合は非圧縮のまま続行する
+    }
+  }
+
+  const size = new Blob([qrText]).size;
+  if (size > QR_SAFE_BYTE_LIMIT) {
+    const extraHint = compressed
+      ? "圧縮しても収まりませんでした。"
+      : supportsGzipStreams()
+        ? "圧縮を試みましたが、効果がありませんでした。"
+        : "このブラウザは圧縮に対応していないため収まりませんでした（対応ブラウザならもう少し多く入る場合があります）。";
+    statusEl.textContent = `データが大きすぎるため（約${size}バイト）、QRコードでは表示できません。${extraHint}登録チャンネル数を減らすか、「コピー」「共有」「ファイル保存」をお使いください。`;
+    wrap.hidden = true;
+    canvas.innerHTML = "";
+    return;
+  }
+  if (typeof qrcode !== "function") {
+    statusEl.textContent = "QRコード用ライブラリの読み込みに失敗しました。「コピー」または「ファイル保存」をお使いください。";
+    return;
+  }
+  try {
+    const qr = qrcode(0, "M"); // 0 = バージョン自動判定, 'M' = 誤り訂正レベル
+    qr.addData(qrText);
+    qr.make();
+    canvas.innerHTML = qr.createSvgTag(4, 8);
+    wrap.hidden = false;
+    statusEl.textContent = compressed
+      ? "他の端末のカメラでスキャンし、読み取ったテキストをそのままコピーして「他の端末から受け取る」欄に貼り付けてください（圧縮データです）。"
+      : "他の端末のカメラ（または他の端末で開いたQR読み取り）でスキャンしてください。";
+  } catch (e) {
+    statusEl.textContent = "QRコードの生成に失敗しました。「コピー」または「ファイル保存」をお使いください。";
+  }
+}
+
+// テキスト（貼り付け・ファイル読み込みどちらも共通）を検証して適用する。
+// 既存の登録チャンネル等を上書きする前に、必ずconfirm()で最終確認を挟む。
+async function applyTransferJsonText(text, statusEl) {
+  let jsonText = text;
+  // QRコード（圧縮対応）から読み取ったテキストはGZIP_QR_PREFIXで始まる。
+  // その場合はBase64デコード→gzip展開してから通常のJSONとして扱う。
+  if (jsonText.startsWith(GZIP_QR_PREFIX)) {
+    if (!supportsGzipStreams()) {
+      statusEl.textContent = "このブラウザは圧縮データの展開に対応していません。最新のブラウザでお試しいただくか、「コピー」や「ファイル保存」で作成したデータをお使いください。";
+      return;
+    }
+    try {
+      jsonText = await gunzipBase64ToText(jsonText.slice(GZIP_QR_PREFIX.length));
+    } catch (e) {
+      statusEl.textContent = "圧縮データの展開に失敗しました。QRコードを読み取ったテキスト全体が正しくコピーされているか確認してください。";
+      return;
+    }
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(jsonText);
+  } catch (e) {
+    statusEl.textContent = "JSONとして読み取れませんでした。コピーしたテキスト全体が貼り付けられているか確認してください。";
+    return;
+  }
+  if (!payload || payload.type !== TRANSFER_SCHEMA_TYPE) {
+    statusEl.textContent = "形式が正しくないデータです（UnDopの引き継ぎデータではない可能性があります）。";
+    return;
+  }
+  const confirmed = confirm(
+    "この端末の登録チャンネル・お気に入り・設定を、読み込んだ内容で上書きします" +
+      "（視聴済み履歴は上書きせず合算します）。よろしいですか？"
+  );
+  if (!confirmed) {
+    statusEl.textContent = "キャンセルしました。";
+    return;
+  }
+  try {
+    applyTransferPayload(payload);
+  } catch (e) {
+    statusEl.textContent = e.message;
+    return;
+  }
+  statusEl.textContent = "反映しました。";
+  renderSettingsForm();
+  renderChannelManageList();
+  refreshAll();
+}
+
+// 「他の端末への引き継ぎ」全体を折りたたみ状態に戻す（QRコード表示も一緒に隠れる。
+// <details>を閉じると中身はブラウザ標準の仕組みで非表示になるため、QR表示専用の
+// 「閉じる」ボタンは持たせていない）。設定パネルを閉じたとき（closeSettings()）に呼ぶ。
+function collapseTransferDetails() {
+  const details = document.getElementById("transfer-details");
+  if (details) details.open = false;
+}
+
+document.getElementById("transfer-copy-btn").addEventListener("click", copyTransferPayload);
+document.getElementById("transfer-download-btn").addEventListener("click", downloadTransferPayload);
+document.getElementById("transfer-qr-btn").addEventListener("click", showTransferQr);
+
+// Web Share API対応環境でのみ「共有」ボタンを表示する（supportsFileShare()は
+// gzip圧縮の各種ヘルパーと同じセクションで定義済み）。
+const transferShareBtn = document.getElementById("transfer-share-btn");
+if (supportsFileShare()) {
+  transferShareBtn.hidden = false;
+  transferShareBtn.addEventListener("click", shareTransferPayload);
+}
+
+document.getElementById("transfer-paste-apply-btn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("transfer-import-status");
+  const text = document.getElementById("transfer-paste-input").value.trim();
+  if (!text) {
+    statusEl.textContent = "貼り付け欄が空です。";
+    return;
+  }
+  await applyTransferJsonText(text, statusEl);
+});
+
+document.getElementById("transfer-file-input").addEventListener("change", (e) => {
+  const statusEl = document.getElementById("transfer-import-status");
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    await applyTransferJsonText(String(reader.result || ""), statusEl);
+    e.target.value = ""; // 同じファイルを連続で選び直しても change が発火するようにリセット
+  };
+  reader.onerror = () => {
+    statusEl.textContent = "ファイルの読み込みに失敗しました。";
+  };
+  reader.readAsText(file);
+});
+
 // ---------- 初回オンボーディング（チュートリアル） ----------
 // APIキーが未設定 かつ まだこのガイドを閉じたことがない「初回アクセス」時にだけ、
 // 「①APIキー取得 → ②貼り付け → ③チャンネル登録」の3ステップガイドを自動表示する。
@@ -1461,7 +1842,7 @@ document.getElementById("favorite-add-form").addEventListener("submit", async (e
 
 let onboardStep = 1;
 const ONBOARD_STEP_TITLES = {
-  1: "YouTube Hub へようこそ",
+  1: "UnDop へようこそ",
   2: "APIキーを貼り付けましょう",
   3: "チャンネルを登録しましょう"
 };

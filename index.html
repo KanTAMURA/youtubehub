@@ -3,13 +3,28 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>YouTube Hub</title>
+<title>UnDop</title>
+<!-- ダーク／ライトの外観設定を、CSS読み込み・初回描画より前に適用しておくための
+     即時実行スクリプト。ここで先にdocumentElementへdata-theme属性を付けておかないと、
+     ページ読み込み直後に一瞬だけ既定（ダーク）配色が見えてから切り替わる
+     「ちらつき」が発生してしまうため、style.cssの<link>より前に置いている。 -->
+<script>
+(function () {
+  try {
+    var raw = localStorage.getItem("yth_state_v1");
+    var theme = raw ? (JSON.parse(raw).theme || "dark") : "dark";
+    document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "dark");
+  }
+})();
+</script>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <header class="app-header">
-  <h1>YouTube Hub</h1>
+  <h1>UnDop</h1>
   <label class="checkbox-inline header-watched-toggle"><input type="checkbox" id="show-watched-toggle" /> 視聴済みの動画も表示</label>
   <button id="channels-toggle" class="icon-button" title="チャンネル管理">チャンネル管理</button>
   <button id="settings-toggle" class="icon-button" title="設定">設定</button>
@@ -21,6 +36,20 @@
   <div class="settings-panel-header">
     <h2>設定</h2>
     <button type="button" id="settings-close" class="icon-button" title="閉じる">✕</button>
+  </div>
+
+  <!-- 外観（ダーク／ライト）切り替え。設定パネルの先頭に配置し、他の項目より
+       目立たせている。スイッチ単体のみで、モード名の表示や説明文はあえて付けていない
+       （2026-09-22時点のデザイン確定に基づく）。 -->
+  <div class="field appearance-field">
+    <div class="appearance-row">
+      <span class="appearance-label">画面の見た目</span>
+      <label class="theme-switch">
+        <input type="checkbox" id="theme-switch-input" />
+        <span class="track"></span>
+        <span class="thumb"></span>
+      </label>
+    </div>
   </div>
 
   <div class="field">
@@ -53,6 +82,44 @@
     </form>
     <ul id="favorite-manage-list" class="manage-list"></ul>
   </div>
+
+  <!-- 他の端末への引き継ぎ（エクスポート/インポート）。
+       「同期」ではなく、必要なときに手動でコピーする方式（README参照）。
+       設定パネル内で場所を取りすぎないよう、<details>で折りたたみ式（既定は閉）にしている。
+       閉じている間は中身がブラウザ標準の仕組みで非表示になるため、QRコード表示等を
+       個別に隠すための「閉じる」ボタンは不要（このdetails自体を閉じれば一緒に隠れる）。 -->
+  <details class="field transfer-details" id="transfer-details">
+    <summary class="transfer-summary">他の端末への引き継ぎ</summary>
+    <p class="hint">サーバーには保存していないため、他の端末で同じ内容を見るには、このブラウザからコピーして相手の端末に貼り付ける必要があります。</p>
+
+    <div class="transfer-box">
+      <p class="transfer-subtitle">この端末から送る</p>
+      <label class="checkbox-inline"><input type="checkbox" id="transfer-include-apikey" checked /> APIキーを含める</label>
+      <label class="checkbox-inline"><input type="checkbox" id="transfer-include-watched" /> 視聴済み履歴を含める</label>
+      <div class="transfer-actions">
+        <button type="button" id="transfer-copy-btn" class="icon-button">📋 コピー</button>
+        <!-- Web Share API対応環境（主にモバイル）でのみ、app.js側でhidden属性を外して表示する。 -->
+        <button type="button" id="transfer-share-btn" class="icon-button" hidden>📤 共有</button>
+        <button type="button" id="transfer-qr-btn" class="icon-button">📱 QRコード</button>
+        <button type="button" id="transfer-download-btn" class="icon-button">⬇ ファイル保存</button>
+      </div>
+      <p id="transfer-export-status" class="hint"></p>
+      <div id="transfer-qr-wrap" class="transfer-qr-wrap" hidden>
+        <div id="transfer-qr-canvas"></div>
+      </div>
+    </div>
+
+    <div class="transfer-box">
+      <p class="transfer-subtitle">他の端末から受け取る</p>
+      <textarea id="transfer-paste-input" class="transfer-textarea" rows="3" placeholder="コピーしたテキストをここに貼り付け"></textarea>
+      <div class="transfer-actions">
+        <button type="button" id="transfer-paste-apply-btn" class="icon-button">貼り付けた内容を適用</button>
+        <label class="icon-button transfer-file-label" for="transfer-file-input">ファイルを選択</label>
+        <input type="file" id="transfer-file-input" accept="application/json" hidden />
+      </div>
+      <p id="transfer-import-status" class="hint"></p>
+    </div>
+  </details>
 
   <p class="hint">設定はこのブラウザのlocalStorageにのみ保存されます（サーバー送信なし）。APIキーを他人と共有しないでください。</p>
 </section>
@@ -98,7 +165,7 @@
     <div class="onboard-badge">👋</div>
     <div class="onboard-heads">
       <p class="onboard-eyebrow">はじめての方へ・3ステップで完了</p>
-      <h2 id="onboard-step-title">YouTube Hub へようこそ</h2>
+      <h2 id="onboard-step-title">UnDop へようこそ</h2>
     </div>
     <button type="button" id="onboard-close" class="icon-button" title="閉じる（後でも設定できます）">✕</button>
   </div>
@@ -206,6 +273,9 @@
   <span id="quota-badge">API使用量（概算）: -</span>
 </footer>
 
+<!-- QRコード生成用（他端末への引き継ぎ機能で使用。MITライセンス、外部CDNには依存せず
+     dashboard/vendor/ にファイルを同梱している。詳細はvendor/README参照）。 -->
+<script src="vendor/qrcode.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,3 +1,15 @@
+/* ロゴ（"UnDop"見出し）専用のウェブフォント。CDN依存を避けるため、
+   vendor/qrcode.jsと同じ方針でフォントファイルもこのプロジェクトに同梱している
+   （取得元・ライセンスはvendor/README.md参照）。本文はこれまでどおり
+   システムフォント（日本語含む）のままで、ロゴ部分だけこのフォントを使う。 */
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("vendor/fonts/Poppins-ExtraBold.woff2") format("woff2");
+}
+
 :root {
   --bg: #0f0f10;
   --bg-elevated: #161617;
@@ -9,6 +21,7 @@
   --accent-strong: #3ea6ff;
   --accent-soft: rgba(94, 184, 255, 0.14);
   --border: #2a2a2e;
+  --bg-radial: rgba(94, 184, 255, 0.06);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -19,17 +32,39 @@
   font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
 }
 
+/* ==== ライトモード ====
+   変数名はダークモード（既定）と完全に同じにしているため、切り替えは
+   :root[data-theme="light"] を付け外しするだけでよい（app.js側で実装）。
+   PC版・スマホ版どちらのレイアウトにも自動的に適用される。 */
+:root[data-theme="light"] {
+  --bg: #f4f5f7;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --text: #1c1d1f;
+  --text-dim: #6b6f76;
+  --accent: #0b84ff;
+  --accent-strong: #0072e5;
+  --accent-soft: rgba(11, 132, 255, 0.10);
+  --border: #e1e4e9;
+  --bg-radial: rgba(11, 132, 255, 0.05);
+  --shadow-card: 0 1px 2px rgba(20, 24, 32, 0.06);
+  --shadow-card-hover: 0 10px 24px rgba(20, 24, 32, 0.12);
+  --shadow-panel: -12px 0 32px rgba(20, 24, 32, 0.14);
+}
+
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 480px at 50% -120px, rgba(94, 184, 255, 0.06), transparent 60%),
+    radial-gradient(1200px 480px at 50% -120px, var(--bg-radial), transparent 60%),
     var(--bg);
   color: var(--text);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .app-header {
@@ -44,12 +79,17 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+:root[data-theme="light"] .app-header {
+  background: rgba(255, 255, 255, 0.86);
 }
 
 .app-header h1 {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-family: "Poppins", -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
   margin: 0;
   white-space: nowrap;
   background: linear-gradient(90deg, var(--text), var(--accent));
@@ -161,6 +201,154 @@ body.settings-open {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .hint { font-size: 11px; color: var(--text-dim); margin: 6px 0 0; }
+
+/* ==== 外観（ダーク／ライト）切り替え ====
+   設定パネル先頭の専用フィールド。ラベル＋スイッチのみのシンプルな構成
+   （モード名の表示や説明文はデザイン確定時にあえて外している）。 */
+.appearance-field {
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.appearance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.appearance-label { font-size: 13.5px; font-weight: 700; }
+
+.theme-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+.theme-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.theme-switch .track {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.theme-switch .thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+  pointer-events: none;
+}
+.theme-switch input:checked ~ .track { background: var(--accent-soft); border-color: var(--accent); }
+.theme-switch input:checked ~ .thumb { transform: translateX(20px); }
+.theme-switch input:focus-visible ~ .track { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.field textarea {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 「他の端末への引き継ぎ」欄：設定パネル内で場所を取りすぎないよう、<details>による
+   折りたたみ（既定は閉）にしている。.fieldの下マージンはそのまま使い、開いたときの
+   中身だけこの中で調整する。 */
+.transfer-details { cursor: default; }
+.transfer-summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 0;
+  list-style: none; /* 標準の三角マーカーは使わず、下の::beforeで独自の矢印を出す */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.transfer-summary::-webkit-details-marker { display: none; }
+.transfer-summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+}
+.transfer-details[open] .transfer-summary::before {
+  transform: rotate(90deg);
+}
+.transfer-details[open] .transfer-summary {
+  margin-bottom: 6px;
+}
+
+/* 「他の端末への引き継ぎ」欄：エクスポート（送る）／インポート（受け取る）を
+   同じ見た目の箱で並べて、対になっていることが分かるようにしている。 */
+.transfer-box {
+  padding: 12px 14px 14px;
+  margin-top: 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.transfer-box + .transfer-box { margin-top: 14px; }
+.transfer-subtitle {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.transfer-actions .icon-button {
+  padding: 7px 14px;
+  font-size: 12px;
+}
+.transfer-textarea { margin-top: 2px; }
+
+/* QRコードは白黒で読み取る前提のため、ダーク基調のパネルの中でも背景だけ白にする。
+   閉じ方は個別のボタンを持たせず、上位の<details>（.transfer-details）ごと
+   折りたたむとブラウザ標準の仕組みで一緒に隠れる。 */
+.transfer-qr-wrap {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.transfer-qr-wrap svg {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+}
+
+/* input[type=file]はブラウザ標準の見た目がまちまちなので、hidden化した上で
+   .icon-buttonと同じ見た目の<label for>をボタン代わりにしている。 */
+.transfer-file-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* 設定パネルのAPIキー欄から、初回チュートリアルを見返すためのボタン
    （.icon-buttonの見た目はそのまま、フィールド内に収まるよう少し小さくしている）。 */
