@@ -1546,26 +1546,33 @@ async function gunzipBase64ToText(base64) {
 function supportsFileShare() {
   if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return false;
   try {
-    const testFile = new File(["test"], "test.json", { type: "application/json" });
+    const testFile = new File(["test"], "test.txt", { type: "text/plain" });
     return navigator.canShare({ files: [testFile] });
   } catch (e) {
     return false;
   }
 }
 
+// 拡張子・MIMEタイプについて：中身はJSONだが、あえて.json / application/jsonではなく
+// .txt / text/plainとして書き出している。LINEのトークでは、受信側が.json等
+// 一部の拡張子のファイルを端末に保存（ダウンロード）できない場合がある
+// （送信自体はできるが、受信側の「保存」操作がブロックされる）という制約が
+// 報告されているため、より汎用的に扱われる.txt形式にすることで回避している。
+// 「他の端末から受け取る」側の読み込み処理は拡張子を見ずテキストとして読み、
+// JSON.parseするだけなので、.txtでも.jsonでも問題なく取り込める。
 async function shareTransferPayload() {
   const statusEl = document.getElementById("transfer-export-status");
   const payload = getTransferPayloadFromForm();
   const text = JSON.stringify(payload, null, 2);
   const ts = payload.exportedAt.replace(/[:.]/g, "-");
-  const file = new File([text], `undop-transfer-${ts}.json`, { type: "application/json" });
+  const file = new File([text], `undop-transfer-${ts}.txt`, { type: "text/plain" });
   try {
     await navigator.share({
       files: [file],
       title: "UnDop 引き継ぎデータ",
       text: "UnDopの設定・登録チャンネルの引き継ぎデータです。"
     });
-    statusEl.textContent = "共有しました。";
+    statusEl.textContent = `共有しました。${watchedCountSuffix(payload)}`;
   } catch (e) {
     if (e && e.name === "AbortError") return; // 共有シートをキャンセルしただけの場合は何もしない
     statusEl.textContent = "共有に失敗しました。「コピー」または「ファイル保存」をお試しください。";
@@ -1594,6 +1601,15 @@ function buildTransferPayload(includeApiKey, includeWatched) {
   return payload;
 }
 
+// エクスポート結果に「視聴済み履歴を含める」が実際に反映されたかを、件数つきで
+// 利用者が目視確認できるようにするための文言。チェックが外れている場合は
+// 空文字（メッセージに何も付け足さない）を返す。
+function watchedCountSuffix(payload) {
+  if (!payload.watched) return "";
+  const count = Object.keys(payload.watched).length;
+  return `（視聴済み履歴${count}件を含む）`;
+}
+
 function transferPayloadSize(payload) {
   return new Blob([JSON.stringify(payload)]).size;
 }
@@ -1620,7 +1636,11 @@ function applyTransferPayload(payload) {
   state.onboardingDismissed = true;
   saveState();
 
+  // 呼び出し元（applyTransferJsonText）が結果メッセージに件数を表示できるよう、
+  // 実際に含まれていた視聴済み履歴の件数を返す（含まれていなければnull）。
+  let watchedCount = null;
   if (payload.watched && typeof payload.watched === "object") {
+    watchedCount = Object.keys(payload.watched).length;
     watchedMap = { ...watchedMap, ...payload.watched };
     saveWatchedMap();
   }
@@ -1629,6 +1649,8 @@ function applyTransferPayload(payload) {
   // 混ざらないよう破棄し、次回描画時に取り直す。
   channelVideosCache.clear();
   embeddableCache.clear();
+
+  return { watchedCount };
 }
 
 async function copyTransferPayload() {
@@ -1641,7 +1663,7 @@ async function copyTransferPayload() {
     } else {
       throw new Error("clipboard API unavailable");
     }
-    statusEl.textContent = "コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。";
+    statusEl.textContent = `コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。${watchedCountSuffix(payload)}`;
   } catch (e) {
     // クリップボードAPIが使えない環境（権限拒否・非対応ブラウザ等）向けのフォールバック。
     const ta = document.createElement("textarea");
@@ -1653,7 +1675,7 @@ async function copyTransferPayload() {
     ta.select();
     try {
       document.execCommand("copy");
-      statusEl.textContent = "コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。";
+      statusEl.textContent = `コピーしました。他の端末の「他の端末から受け取る」欄に貼り付けてください。${watchedCountSuffix(payload)}`;
     } catch (e2) {
       statusEl.textContent = "コピーに失敗しました。「ファイル保存」をお試しください。";
     } finally {
@@ -1666,17 +1688,19 @@ function downloadTransferPayload() {
   const statusEl = document.getElementById("transfer-export-status");
   const payload = getTransferPayloadFromForm();
   const text = JSON.stringify(payload, null, 2);
-  const blob = new Blob([text], { type: "application/json" });
+  // .json拡張子だとLINEのトークで受信側が保存（ダウンロード）できない場合が
+  // あるため、.txt / text/plainとして書き出す（shareTransferPayload()と同じ理由）。
+  const blob = new Blob([text], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   const ts = payload.exportedAt.replace(/[:.]/g, "-");
   a.href = url;
-  a.download = `undop-transfer-${ts}.json`;
+  a.download = `undop-transfer-${ts}.txt`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  statusEl.textContent = "ファイルを保存しました。他の端末で「ファイルを選択」から読み込んでください。";
+  statusEl.textContent = `ファイルを保存しました。他の端末で「ファイルを選択」から読み込んでください。${watchedCountSuffix(payload)}`;
 }
 
 async function showTransferQr() {
@@ -1712,7 +1736,8 @@ async function showTransferQr() {
       : supportsGzipStreams()
         ? "圧縮を試みましたが、効果がありませんでした。"
         : "このブラウザは圧縮に対応していないため収まりませんでした（対応ブラウザならもう少し多く入る場合があります）。";
-    statusEl.textContent = `データが大きすぎるため（約${size}バイト）、QRコードでは表示できません。${extraHint}登録チャンネル数を減らすか、「コピー」「共有」「ファイル保存」をお使いください。`;
+    const watchedHint = payload.watched ? "「視聴済み履歴を含める」のチェックを外すと小さくなります。それでも収まらない場合は、" : "";
+    statusEl.textContent = `データが大きすぎるため（約${size}バイト）、QRコードでは表示できません。${extraHint}${watchedHint}登録チャンネル数を減らすか、「コピー」「共有」「ファイル保存」をお使いください。`;
     wrap.hidden = true;
     canvas.innerHTML = "";
     return;
@@ -1727,9 +1752,10 @@ async function showTransferQr() {
     qr.make();
     canvas.innerHTML = qr.createSvgTag(4, 8);
     wrap.hidden = false;
-    statusEl.textContent = compressed
+    const scanHint = compressed
       ? "他の端末のカメラでスキャンし、読み取ったテキストをそのままコピーして「他の端末から受け取る」欄に貼り付けてください（圧縮データです）。"
       : "他の端末のカメラ（または他の端末で開いたQR読み取り）でスキャンしてください。";
+    statusEl.textContent = `${scanHint}${watchedCountSuffix(payload)}`;
   } catch (e) {
     statusEl.textContent = "QRコードの生成に失敗しました。「コピー」または「ファイル保存」をお使いください。";
   }
@@ -1773,13 +1799,19 @@ async function applyTransferJsonText(text, statusEl) {
     statusEl.textContent = "キャンセルしました。";
     return;
   }
+  let result;
   try {
-    applyTransferPayload(payload);
+    result = applyTransferPayload(payload);
   } catch (e) {
     statusEl.textContent = e.message;
     return;
   }
-  statusEl.textContent = "反映しました。";
+  // 視聴済み履歴が含まれていた場合は件数を明示し、「含める」チェックが正しく
+  // 効いていたことをこの画面だけで確認できるようにする。
+  const watchedNote = result && result.watchedCount != null
+    ? `（視聴済み履歴${result.watchedCount}件を合算）`
+    : "";
+  statusEl.textContent = `反映しました。${watchedNote}`;
   renderSettingsForm();
   renderChannelManageList();
   refreshAll();
@@ -1807,11 +1839,15 @@ if (supportsFileShare()) {
 
 document.getElementById("transfer-paste-apply-btn").addEventListener("click", async () => {
   const statusEl = document.getElementById("transfer-import-status");
-  const text = document.getElementById("transfer-paste-input").value.trim();
+  const pasteInput = document.getElementById("transfer-paste-input");
+  const text = pasteInput.value.trim();
   if (!text) {
     statusEl.textContent = "貼り付け欄が空です。";
     return;
   }
+  // 一度適用したテキストは、次はまた新しいデータを貼り付ける想定のため、
+  // ボタンを押した時点（適用結果を待たず）で貼り付け欄を空にしておく。
+  pasteInput.value = "";
   await applyTransferJsonText(text, statusEl);
 });
 
