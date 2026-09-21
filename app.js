@@ -18,6 +18,13 @@ const DEFAULT_CHANNEL_VIDEO_COUNT = 6;
 const MAX_CHANNEL_VIDEO_COUNT = 50;
 const PLAYLIST_FETCH_SIZE = 50;
 
+// 「今日のニュース」で、ニュース対象チャンネル1件あたりに取得する件数。
+// playlistItems.listは1回1ユニット（件数に関わらず一定）なので、多めに取得しても
+// クォータへの影響は小さい。ここから「公開24時間以内」のものだけを候補プールとして残す。
+const NEWS_FETCH_SIZE = 20;
+// 「24時間以内」をfilterByDays（n日以内）で表現するための日数指定。
+const NEWS_WINDOW_DAYS = 1;
+
 // 「登録チャンネルの新着」で、1チャンネルにつき1行に並べる動画カードの最大枚数。
 // これを超える本数を表示するチャンネルは、このチャンネル自身のブロック内で
 // 次の行へ折り返す（#channels-containerの横並び・折り返しはCSS側のflex-wrapで行う）。
@@ -51,6 +58,8 @@ let currentPlayingVideoId = null;
 let watchProgressTimer = null;
 let showWatchedVideos = false; // 「視聴済みの動画も表示」チェックボックスの状態（保存はしない）
 let isFetchingNews = false; // 今日のニュース取得中フラグ（更新ボタン連打・多重呼び出し防止）
+let newsPool = []; // 直近の取得（更新ボタン／リロード）で得た「公開24時間以内」の候補プール（チャンネル横断・重複除去済み）
+let newsDisplayed = []; // 現在ニュース欄に表示している動画（視聴済みになった枠はnewsPoolから即時差し替える）
 const embeddableCache = new Map(); // videoId -> boolean（同一セッション内のキャッシュ）
 const channelVideosCache = new Map(); // channelId -> 取得済みの動画リスト（同一セッション内のキャッシュ。APIの再呼び出しを避けるため）
 
@@ -744,6 +753,7 @@ function markWatchedAndRefresh(videoId) {
   if (isWatched(videoId)) return;
   markWatched(videoId);
   renderChannelsFeed(); // 視聴済みになった動画を「登録チャンネルの新着」から自動で非表示にする
+  renderNewsFromCache(); // ニュース欄も、取得済みプールから即時差し替える（APIは呼ばない）
 }
 
 function handlePlayerStateChange(event) {
@@ -845,13 +855,15 @@ async function renderChannelsFeed() {
     container.appendChild(block);
 
     // このチャンネルのブロック幅を「動画本数に応じた自然な幅」にするため、
-    // 1行あたりの枚数（最大MAX_CHANNEL_CARDS_PER_ROW枚）ぶんだけ固定幅の列を
-    // インラインで指定する（.gridクラス既定のauto-fillを上書き）。これにより
-    // 動画が少ないチャンネルは幅が狭く、多いチャンネルは最大幅×複数行になり、
-    // #channels-container側のflex-wrapで横方向に詰めて並ぶ。
+    // 1行あたりの枚数（最大MAX_CHANNEL_CARDS_PER_ROW枚）をCSSカスタムプロパティ
+    // --ch-cols として渡す（実際のgrid-template-columnsはstyle.css側の
+    // .channel-block .gridで定義。以前はここでgridTemplateColumnsを直接
+    // インライン指定していたが、それだとstyle.css側のメディアクエリ
+    // （スマホ版で画面幅いっぱいに広げる指定）で上書きできなくなるため、
+    // カスタムプロパティ経由に変更した）。
     const cardsPerRow = Math.max(1, Math.min(limited.length, MAX_CHANNEL_CARDS_PER_ROW));
     const chGridEl = document.getElementById(`chgrid-${ch.id}`);
-    chGridEl.style.gridTemplateColumns = `repeat(${cardsPerRow}, 220px)`;
+    chGridEl.style.setProperty("--ch-cols", cardsPerRow);
 
     if (error) {
       chGridEl.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
@@ -884,12 +896,27 @@ function shuffle(arr) {
   return a;
 }
 
+// 動画IDが重複している場合、先に出てきたものだけを残す
+// （複数のニュース対象チャンネルの投稿が同じ動画を指すことは通常ないが、念のため）。
+function dedupeByVideoId(videos) {
+  const seen = new Set();
+  const result = [];
+  for (const v of videos) {
+    if (seen.has(v.videoId)) continue;
+    seen.add(v.videoId);
+    result.push(v);
+  }
+  return result;
+}
+
 async function renderDailyNews() {
   const grid = document.getElementById("news-grid");
   const newsChannels = state.channels.filter((c) => c.isNews);
   const refreshBtn = document.getElementById("news-refresh-btn");
 
   if (!state.apiKey || !newsChannels.length) {
+    newsPool = [];
+    newsDisplayed = [];
     grid.innerHTML = `<p class="empty">設定でAPIキーとニュース対象チャンネル（チェックボックス）を登録してください。</p>`;
     return;
   }
@@ -901,19 +928,55 @@ async function renderDailyNews() {
   try {
     const pooled = [];
     for (const ch of newsChannels) {
-      const videos = await fetchPlaylistLatest(ch.uploadsPlaylistId, 5);
+      const videos = await fetchPlaylistLatest(ch.uploadsPlaylistId, NEWS_FETCH_SIZE);
       pooled.push(...videos);
     }
-    const picked = shuffle(pooled).slice(0, state.newsCount || 3);
-    // 再生時間・再生数（設定でオンの場合のみ）：最終的に表示する件数分だけまとめて取得する。
-    await attachVideoStats(picked);
-    renderGrid("news-grid", picked, "本日分のニュースはありません。");
+    // 「公開24時間以内」のものだけを候補プールとして保持する。このプールは
+    // 「更新」ボタン押下・リロードのたびに作り直され、視聴済みになった動画の
+    // 差し替え（renderNewsFromCache）はこのプールの中からAPIを呼ばずに行う。
+    newsPool = dedupeByVideoId(filterByDays(pooled, NEWS_WINDOW_DAYS));
+    newsDisplayed = [];
+    await renderNewsFromCache();
   } catch (err) {
     grid.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
   } finally {
     isFetchingNews = false;
     if (refreshBtn) refreshBtn.disabled = false;
   }
+}
+
+// newsPool・newsDisplayedの現在の状態から、視聴済みになった枠をnewsPool内の
+// 未視聴・未表示の動画に差し替えて再描画する。APIは一切呼ばない
+// （「視聴済みは即時非表示にしたいが、そのためだけにAPIを呼び直したくない」という方針のため）。
+// 差し替え候補がプール内に残っていない場合は、その枠は空欄のまま（表示件数が減る）にする。
+async function renderNewsFromCache() {
+  const newsChannels = state.channels.filter((c) => c.isNews);
+  if (!state.apiKey || !newsChannels.length) return;
+
+  const displayedIds = new Set(newsDisplayed.map((v) => v.videoId));
+  const stillValid = newsDisplayed.filter((v) => !isWatched(v.videoId));
+  const needed = (state.newsCount || 3) - stillValid.length;
+
+  if (needed > 0) {
+    const candidates = newsPool.filter(
+      (v) => !isWatched(v.videoId) && !displayedIds.has(v.videoId)
+    );
+    const additional = shuffle(candidates).slice(0, needed);
+    newsDisplayed = [...stillValid, ...additional];
+  } else {
+    newsDisplayed = stillValid;
+  }
+
+  // 再生時間・再生数（設定でオンの場合のみ）：追加分も含めてまとめて取得する。
+  await attachVideoStats(newsDisplayed);
+  renderGrid("news-grid", newsDisplayed, "本日分のニュースはありません。", {
+    showWatchToggle: true,
+    onToggle: handleNewsWatchToggle
+  });
+}
+
+function handleNewsWatchToggle() {
+  renderNewsFromCache();
 }
 
 document.getElementById("news-refresh-btn").addEventListener("click", () => {
@@ -1053,6 +1116,7 @@ document.getElementById("onboarding-reopen-btn").addEventListener("click", () =>
 document.getElementById("news-count-input").addEventListener("change", (e) => {
   state.newsCount = Math.max(1, Math.min(10, Number(e.target.value) || 3));
   saveState();
+  renderNewsFromCache(); // 件数変更を、APIを呼び直さずプールから即座に反映する
 });
 
 document.getElementById("watch-ratio-input").addEventListener("change", (e) => {
@@ -1551,6 +1615,21 @@ document.getElementById("onboard-channel-form").addEventListener("submit", async
   }
 });
 
+// ---------- スマホ版：ヘッダー高さの同期 ----------
+// スマホ版（幅480px以下）はヘッダーが「タイトル＋ボタン」「視聴済みトグル」の
+// 2段構成になり、PC版より高さが増える。.settings-panel・.settings-backdrop は
+// top: var(--header-height) でヘッダーの直下から始まる作りになっているため、
+// ヘッダーの実際の高さをJSで測って --header-height に反映する
+// （固定pxをCSSに書かないのは、機種のフォント設定等で1〜2段の折り返し方や
+// 高さが変わってもズレないようにするため）。
+function syncHeaderHeight() {
+  const header = document.querySelector(".app-header");
+  if (!header) return;
+  const h = Math.ceil(header.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--header-height", `${h}px`);
+}
+window.addEventListener("resize", syncHeaderHeight);
+
 // ---------- 初期化 ----------
 
 function refreshAll() {
@@ -1564,6 +1643,7 @@ function init() {
   renderSettingsForm();
   renderChannelManageList();
   refreshAll();
+  syncHeaderHeight();
   if (!state.apiKey && !state.onboardingDismissed) {
     openOnboarding();
   } else if (!state.apiKey) {

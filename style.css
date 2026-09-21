@@ -549,12 +549,15 @@ body.settings-open {
 
 /* 「登録チャンネルの新着」はチャンネルを均等幅の列に割り当てず、各チャンネルの
    ブロック幅をその中の動画本数に応じた「自然な幅」にして（1行最大4枚まで。
-   app.js側で#chgrid-*要素にgrid-template-columnsをインラインで設定している）、
+   app.js側で#chgrid-*要素に--ch-cols（列数）というCSSカスタムプロパティを
+   設定している。実際のgrid-template-columnsは下の.channel-block .gridで定義）、
    #channels-container（flex-wrap）で横方向にできるだけ詰めて並べる。
    次のチャンネルが今の行の残り幅に収まらなければ、そこで空白を残して
    次の行へ折り返す（隙間を埋めるための並べ替えはしない。無理に引き伸ばしもしない）。
    どのチャンネルを上/下にするか（表示する動画があるチャンネルを上、
-   ないチャンネルを下にまとめる）はapp.js側で描画順を並べ替えて決めている。 */
+   ないチャンネルを下にまとめる）はapp.js側で描画順を並べ替えて決めている。
+   ※スマホ版（幅480px以下）では、この「自然な幅」レイアウトはやめて画面幅いっぱいに
+   広げる。末尾の @media (max-width: 480px) を参照。 */
 #channels-container {
   display: flex;
   flex-wrap: wrap;
@@ -563,6 +566,7 @@ body.settings-open {
 }
 .channel-block {
   flex: 0 0 auto;
+  max-width: 100%;
 }
 .channel-block h3 {
   font-size: 13px;
@@ -578,6 +582,17 @@ body.settings-open {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
+}
+
+/* 「登録チャンネルの新着」内のグリッドだけは、列数をapp.js側が計算した
+   --ch-cols（動画本数に応じた列数。最大4）を使う。以前はapp.js側で
+   grid-template-columnsをインラインstyleとして直接設定していたが、
+   それだと下の@media (max-width: 480px)で上書きできなくなる
+   （インラインstyleはメディアクエリより常に優先されてしまうため）。
+   CSSカスタムプロパティ経由にすることで、実際のプロパティ指定はこの
+   スタイルシート側に置いたまま、値だけをapp.js側から渡せるようにしている。 */
+.channel-block .grid {
+  grid-template-columns: repeat(var(--ch-cols, 1), 220px);
 }
 
 .video-card {
@@ -861,3 +876,58 @@ body.settings-open {
 }
 .icon-button.primary:hover { background: var(--accent); }
 .icon-button:disabled { opacity: 0.35; cursor: default; transform: none; }
+
+/* ============================================================
+   ==== スマホ版対応（幅480px以下） ====
+   PC版のレイアウト・配色・構成は変更しない。ここでは以下の2点のみ調整する。
+
+   1. ヘッダー：タイトル＋「チャンネル管理」「設定」ボタンが横一列のままだと、
+      幅の狭い画面ではボタン（特に設定）が画面外に押し出されて押せなくなる
+      （flex-wrapが無いことが原因だった）。そのため、
+        1段目＝タイトル＋チャンネル管理／設定ボタン
+        2段目＝視聴済みトグル（小さく表示）
+      の2段構成に固定する。ヘッダーの実際の高さは2段になった分だけ増えるため、
+      app.js側で実測して --header-height に反映する（syncHeaderHeight）。
+      固定のpx値をここに書かないのは、フォント設定等で高さが変わっても
+      ズレないようにするため。
+
+   2. 「登録チャンネルの新着」：チャンネルごとに「動画本数に応じた自然な幅」で
+      並べるPC版のレイアウトをやめ、各チャンネルのブロックを画面幅いっぱいに
+      広げる。ブロック内のグリッドも「今日のニュース」と同じ
+      auto-fill/minmax(220px, 1fr) に統一し、同じ詰め方でカードが並ぶようにする。
+   ============================================================ */
+@media (max-width: 480px) {
+  .app-header {
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 10px 14px 8px;
+    gap: 8px 10px;
+  }
+  .app-header h1 { font-size: 15px; }
+  .app-header .icon-button {
+    padding: 8px 14px;
+    font-size: 12.5px;
+  }
+  .header-watched-toggle {
+    order: 3;
+    flex: 1 1 100%;
+    margin-left: 0;
+    margin-top: 2px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .video-section { padding: 14px 14px; max-width: 100%; }
+  .video-section h2 { font-size: 14.5px; margin: 6px 0 10px; }
+  .grid { gap: 12px; }
+
+  #channels-container { flex-direction: column; gap: 22px; }
+  .channel-block { width: 100%; }
+  .channel-block .grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+
+  .settings-panel, #channels-panel { width: 100vw; }
+}
