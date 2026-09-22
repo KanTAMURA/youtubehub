@@ -48,7 +48,7 @@ const DEFAULT_STATE = {
   showVideoStats: true, // 動画の再生時間・再生数バッジを表示するか（オフならvideos.listを呼ばない）
   channels: [], // { id, title, uploadsPlaylistId, isNews, showInFeed, videoCount, daysLimit }
   favorites: [], // { videoId, title, thumbnail, channelTitle }
-  quota: { date: "", units: 0 },
+  quota: { date: "", units: 0, warned50: false, warned90: false, autoStopped: false },
   onboardingDismissed: false // 初回チュートリアルを一度でも閉じた（スキップ／完了／✕）かどうか
 };
 
@@ -81,6 +81,8 @@ function loadState() {
       }
       return rest;
     });
+    // 旧バージョン（quota.warned50等が無い状態）からの移行：不足しているフィールドを補う。
+    merged.quota = { date: "", units: 0, warned50: false, warned90: false, autoStopped: false, ...(merged.quota || {}) };
     return merged;
   } catch (e) {
     console.warn("state読み込み失敗。初期状態を使用します。", e);
@@ -164,25 +166,154 @@ function unmarkWatched(videoId) {
 }
 
 // ---------- クォータ概算トラッキング ----------
+// YouTube Data API v3の無料枠は1日10,000ユニット。このダッシュボードでは実際のAPI側の
+// 使用量を取得する手段がない（Google Cloud Console側でしか正確な値は見られない）ため、
+// 各APIコールのユニットコストをクライアント側で加算していく「概算値」を使う。
+// 概算値であることを踏まえ、実際の割合より少し手前（45%・90%）で警告を出し、
+// 95%で自動停止することで、無料枠（100%）を超える前に必ず止まるようにしている。
+
+const QUOTA_DAILY_LIMIT = 10000;
+const QUOTA_WARN_50_RATIO = 0.45; // 概算値が45%に到達した時点で「50%到達」を警告
+const QUOTA_WARN_100_RATIO = 0.9; // 概算値が90%に到達した時点で「100%到達」を警告
+const QUOTA_AUTOSTOP_RATIO = 0.95; // 概算値が95%に到達した時点でAPI呼び出しを自動停止
+
+// 日付が変わっていたら、使用量・警告表示済みフラグ・自動停止フラグをすべてリセットする。
+// trackQuota()だけでなくapiGet()の冒頭でも呼び、日付変更直後の1回目の呼び出しが
+// 「前日の自動停止」の影響を受けて弾かれてしまわないようにしている。
+function resetQuotaIfNewDay() {
+  if (state.quota.date !== todayStr()) {
+    state.quota = { date: todayStr(), units: 0, warned50: false, warned90: false, autoStopped: false };
+  }
+}
 
 function trackQuota(units) {
-  if (state.quota.date !== todayStr()) {
-    state.quota = { date: todayStr(), units: 0 };
-  }
+  resetQuotaIfNewDay();
   state.quota.units += units;
   saveState();
+  // 自動停止フラグ等（checkQuotaThresholds内で更新）をバッジ表示に反映させるため、
+  // 先に閾値チェックを行ってからバッジを描画する。
+  checkQuotaThresholds();
   renderQuotaBadge();
 }
 
+// 45%→「50%到達」警告、90%→「100%到達」警告、95%→自動停止、の順にチェックし、
+// 該当する中でもっとも深刻なものだけを表示する（複数のポップアップが連続で
+// 出てしまわないようにするため）。一度表示した警告は、日付が変わるまで再表示しない。
+function checkQuotaThresholds() {
+  const ratio = state.quota.units / QUOTA_DAILY_LIMIT;
+  let kindToShow = null;
+
+  if (!state.quota.autoStopped && ratio >= QUOTA_AUTOSTOP_RATIO) {
+    state.quota.autoStopped = true;
+    state.quota.warned90 = true;
+    state.quota.warned50 = true;
+    kindToShow = "stop";
+  } else if (!state.quota.warned90 && ratio >= QUOTA_WARN_100_RATIO) {
+    state.quota.warned90 = true;
+    state.quota.warned50 = true;
+    kindToShow = "100";
+  } else if (!state.quota.warned50 && ratio >= QUOTA_WARN_50_RATIO) {
+    state.quota.warned50 = true;
+    kindToShow = "50";
+  }
+
+  if (kindToShow) {
+    saveState();
+    openQuotaAlert(kindToShow);
+  }
+}
+
 function renderQuotaBadge() {
+  const el = document.getElementById("quota-badge");
   if (state.quota.date !== todayStr()) {
-    document.getElementById("quota-badge").textContent = "API使用量（概算）: 0 / 10,000 ユニット（本日）";
+    el.textContent = "API使用量（概算）: 0 / 10,000 ユニット（本日）";
+    el.style.color = "";
     return;
   }
-  const el = document.getElementById("quota-badge");
-  el.textContent = `API使用量（概算）: ${state.quota.units.toLocaleString()} / 10,000 ユニット（本日・概算値）`;
-  el.style.color = state.quota.units > 8000 ? "#ff6b6b" : "";
+  const ratio = state.quota.units / QUOTA_DAILY_LIMIT;
+  if (state.quota.autoStopped) {
+    el.textContent = `API使用量（概算）: ${state.quota.units.toLocaleString()} / 10,000 ユニット（95%到達のため本日は自動停止中）`;
+    el.style.color = "var(--danger)";
+  } else {
+    el.textContent = `API使用量（概算）: ${state.quota.units.toLocaleString()} / 10,000 ユニット（本日・概算値）`;
+    el.style.color =
+      ratio >= QUOTA_WARN_100_RATIO ? "var(--danger)" : ratio >= QUOTA_WARN_50_RATIO ? "var(--accent-strong)" : "";
+  }
 }
+
+// ---------- API使用量の警告・自動停止のポップアップ（50%・100%到達の警告／95%到達の自動停止） ----------
+
+const QUOTA_ALERT_CONTENT = {
+  "50": {
+    icon: "🔶",
+    title: "API使用量が50%に近づいています",
+    body:
+      "本日のAPI使用量（概算）が50%に近づいてきました。まだ余裕はありますが、チャンネルを追加するときは「チャンネル名検索」より、URL・@ハンドル・チャンネルIDの直接入力がおすすめです（消費ユニットが1/100で済みます）。"
+  },
+  "100": {
+    icon: "🔴",
+    title: "API使用量が100%（無料枠の上限）に近づいています",
+    body:
+      "本日のAPI使用量（概算）が90%を超え、無料枠の上限（100%）に近づいています。95%に達すると自動的にAPI呼び出しを停止しますので、無料枠を超える心配はありません。新しいチャンネルの検索などは、念のため明日以降に回すと安心です。"
+  },
+  stop: {
+    icon: "🛑",
+    title: "95%に達したため、本日のAPI呼び出しを自動停止しました",
+    body:
+      "本日のAPI使用量（概算）が95%に達したため、無料枠（1日10,000ユニット）を超えないよう、YouTube APIへの問い合わせを自動的に停止しました。新着動画の更新などは日付が変わるまで一時的に行われません。日本時間で日付が変わると自動的に再開します。"
+  }
+};
+
+function isQuotaAlertOpen() {
+  return !document.getElementById("quota-alert-panel").hidden;
+}
+
+function openQuotaAlert(kind) {
+  const content = QUOTA_ALERT_CONTENT[kind];
+  if (!content) return;
+  document.getElementById("quota-alert-title").textContent = `${content.icon} ${content.title}`;
+  document.getElementById("quota-alert-body").textContent = content.body;
+  document.getElementById("quota-alert-panel").classList.toggle("quota-alert-card--danger", kind !== "50");
+  document.getElementById("quota-alert-backdrop").hidden = false;
+  document.getElementById("quota-alert-panel").hidden = false;
+  updateBodyScrollLock();
+}
+
+function closeQuotaAlert() {
+  document.getElementById("quota-alert-backdrop").hidden = true;
+  document.getElementById("quota-alert-panel").hidden = true;
+  updateBodyScrollLock();
+}
+
+document.getElementById("quota-alert-close").addEventListener("click", closeQuotaAlert);
+document.getElementById("quota-alert-backdrop").addEventListener("click", closeQuotaAlert);
+
+// ---------- APIについてのインフォメーション（各所のⓘボタンから共通で開く） ----------
+// 「データの取得元」「無料枠」「普段の消費量の目安」「検索と直接入力の違い」「警告・自動停止の仕組み」を
+// 一箇所にまとめて説明するポップアップ。APIに関する記述がある各所（設定パネル・チャンネル管理・
+// 初回チュートリアル・フッターの使用量表示）に置いたⓘボタンから、共通のこのポップアップを開く。
+
+function isApiInfoOpen() {
+  return !document.getElementById("api-info-panel").hidden;
+}
+
+function openApiInfoModal() {
+  document.getElementById("api-info-backdrop").hidden = false;
+  document.getElementById("api-info-panel").hidden = false;
+  updateBodyScrollLock();
+}
+
+function closeApiInfoModal() {
+  document.getElementById("api-info-backdrop").hidden = true;
+  document.getElementById("api-info-panel").hidden = true;
+  updateBodyScrollLock();
+}
+
+document.querySelectorAll(".api-info-btn").forEach((btn) => {
+  btn.addEventListener("click", openApiInfoModal);
+});
+document.getElementById("api-info-close").addEventListener("click", closeApiInfoModal);
+document.getElementById("api-info-backdrop").addEventListener("click", closeApiInfoModal);
 
 // ---------- YouTube Data API 呼び出し ----------
 
@@ -191,6 +322,12 @@ const API_BASE = "https://www.googleapis.com/youtube/v3";
 async function apiGet(path, params, costUnits) {
   if (!state.apiKey) {
     throw new Error("APIキーが未設定です。設定パネルで入力してください。");
+  }
+  resetQuotaIfNewDay();
+  if (state.quota.autoStopped) {
+    throw new Error(
+      "本日のAPI使用量が95%に達したため、無料枠を超えないよう自動的にAPI呼び出しを停止しています。日本時間で日付が変わると自動的に再開します。"
+    );
   }
   const url = new URL(`${API_BASE}/${path}`);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -1004,7 +1141,8 @@ function renderFavoritesGrid() {
 // 設定パネル・チャンネル管理パネル・初回チュートリアルのうち、いずれか1つでも開いていれば
 // 背面スクロールを止める（複数の扉の開閉が絡んでも、状態を毎回まとめて判定するので崩れない）。
 function updateBodyScrollLock() {
-  const anyOpen = isSettingsOpen() || isChannelsOpen() || isOnboardingOpen();
+  const anyOpen =
+    isSettingsOpen() || isChannelsOpen() || isOnboardingOpen() || isQuotaAlertOpen() || isApiInfoOpen();
   document.body.classList.toggle("settings-open", anyOpen);
 }
 
@@ -1085,7 +1223,11 @@ document.getElementById("channels-backdrop").addEventListener("click", closeChan
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (isOnboardingOpen()) {
+  if (isQuotaAlertOpen()) {
+    closeQuotaAlert();
+  } else if (isApiInfoOpen()) {
+    closeApiInfoModal();
+  } else if (isOnboardingOpen()) {
     closeOnboarding();
   } else if (isChannelsOpen()) {
     closeChannels();

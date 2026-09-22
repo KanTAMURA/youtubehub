@@ -22,6 +22,8 @@
   --accent-soft: rgba(94, 184, 255, 0.14);
   --border: #2a2a2e;
   --bg-radial: rgba(94, 184, 255, 0.06);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -48,6 +50,8 @@
   --accent-soft: rgba(11, 132, 255, 0.10);
   --border: #e1e4e9;
   --bg-radial: rgba(11, 132, 255, 0.05);
+  --danger: #e03131;
+  --danger-soft: rgba(224, 49, 49, 0.10);
   --shadow-card: 0 1px 2px rgba(20, 24, 32, 0.06);
   --shadow-card-hover: 0 10px 24px rgba(20, 24, 32, 0.12);
   --shadow-panel: -12px 0 32px rgba(20, 24, 32, 0.14);
@@ -422,6 +426,124 @@ body.settings-open {
   letter-spacing: 0.02em;
   vertical-align: 1px;
   white-space: nowrap;
+}
+
+/* ==== APIについてのⓘボタン／使用量バッジの横並び ====
+   「APIに関する記述がある各所」（設定パネルのAPIキー欄・フッターの使用量バッジ・
+   チャンネル管理の節約ワザ帯・初回チュートリアル）に共通で置く、小さな丸い情報ボタン。
+   押すとapp.js側でAPI情報ポップアップ（#api-info-panel）を開く。 */
+.info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: -3px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.info-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 設定パネルの「YouTube Data API v3 キー」ラベルなど、ラベル文言の右にⓘボタンを
+   並べる箇所で使う。label自体はdisplay:blockのままだと折り返してしまうため、
+   ここだけflexにして文言とボタンを1行に収める。 */
+.field-label-with-info {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+/* フッターの使用量バッジ＋ⓘボタン。.app-footerはtext-align:centerなので、
+   inline-flexにしてバッジとボタンをひとまとまりのまま中央寄せする。 */
+.quota-badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ==== APIについてのポップアップ／API使用量の警告ポップアップ（共通） ====
+   初回チュートリアル（.onboarding-backdrop/.onboard-card）とは別の、
+   中央モーダルとして表示する軽量なポップアップ。中身（見出し・本文・閉じるボタンのみ）が
+   シンプルな点が違うだけで、backdrop+カードの仕組みはオンボーディングと同様。
+   オンボーディング表示中にⓘボタンを押して開かれることもあるため、
+   z-indexはオンボーディング（backdrop:190 / card:200）より高くしている。 */
+.info-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 210;
+}
+.info-modal-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  padding: 20px 22px 22px;
+  z-index: 220;
+}
+.info-modal-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  margin: 0 0 14px;
+}
+.info-modal-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.info-modal-list li {
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.info-modal-list li b { color: var(--accent); }
+.info-modal-close-row {
+  margin-top: 18px;
+  text-align: right;
+}
+
+/* API使用量の警告ポップアップの本文（#quota-alert-body）。中身はテキストのみで、
+   見出しの色だけ.quota-alert-card--dangerで切り替える（50%到達時のみ通常色のまま、
+   100%接近・自動停止時は危険色に）。 */
+.quota-alert-body {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.quota-alert-card--danger h2 { color: var(--danger); }
+.quota-alert-card--danger {
+  border-color: var(--danger-soft);
 }
 
 .detect-hint {

@@ -53,7 +53,7 @@
   </div>
 
   <div class="field">
-    <label for="api-key-input">YouTube Data API v3 キー</label>
+    <label for="api-key-input" class="field-label-with-info">YouTube Data API v3 キー <button type="button" class="info-btn api-info-btn" title="APIについて" aria-label="APIについて">ⓘ</button></label>
     <input type="text" id="api-key-input" placeholder="AIza..." />
     <p class="hint">Google Cloud ConsoleでYouTube Data API v3を有効化して発行したAPIキーを貼り付けてください（README参照）。</p>
     <button type="button" id="onboarding-reopen-btn" class="icon-button onboarding-reopen-btn">📋 初回チュートリアルをもう一度見る</button>
@@ -134,7 +134,7 @@
     <button type="button" id="channels-close" class="icon-button" title="閉じる">✕</button>
   </div>
 
-  <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌</p>
+  <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌 <button type="button" class="info-btn api-info-btn" title="APIについて" aria-label="APIについて">ⓘ</button></p>
 
   <div class="field">
     <label>登録チャンネル</label>
@@ -180,7 +180,7 @@
 
     <!-- STEP 1: APIキーの入手 -->
     <div class="onboard-step" id="onboard-step-1">
-      <p class="lead">このツールはあなた専用のGoogle APIキーで動きます（無料）。キーはこのブラウザだけに保存され、外部には送信されません。下のボタンから2ステップで取得できます。</p>
+      <p class="lead">このツールはあなた専用のGoogle APIキーで動きます（無料）。キーはこのブラウザだけに保存され、外部には送信されません。下のボタンから2ステップで取得できます。 <button type="button" class="info-btn api-info-btn" title="APIについて" aria-label="APIについて">ⓘ</button></p>
 
       <a class="link-btn" href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">
         <span class="step-flag">👉 はじめはココ！</span>
@@ -223,7 +223,7 @@
     <!-- STEP 3: 最初のチャンネル登録 -->
     <div class="onboard-step" id="onboard-step-3" hidden>
       <p class="lead">最後に、よく見るチャンネルを1つ登録してみましょう（後からいくつでも追加できます。ここはスキップしても大丈夫です）。</p>
-      <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌</p>
+      <p class="quota-tip"><span class="tip-badge">⚡節約ワザ</span> URL・@ハンドル・チャンネルIDを<b>直接入力</b>すれば検索を使わずに追加できて、消費ユニットはなんと<b>1/100</b>（100→1ユニット）！わかるときは直接入力が断然オススメです🙌 <button type="button" class="info-btn api-info-btn" title="APIについて" aria-label="APIについて">ⓘ</button></p>
       <form id="onboard-channel-form" class="inline-form">
         <input type="text" id="onboard-channel-input" placeholder="チャンネル名 / URL / @ハンドル / チャンネルID" />
         <button type="submit" id="onboard-channel-submit">追加</button>
@@ -244,6 +244,32 @@
       <button type="button" class="icon-button" id="onboard-back" disabled>戻る</button>
       <button type="button" class="icon-button primary" id="onboard-next">次へ</button>
     </div>
+  </div>
+</section>
+
+<!-- APIについてのインフォメーション（各所のⓘボタンから共通で開く） -->
+<div id="api-info-backdrop" class="info-modal-backdrop" hidden></div>
+<section id="api-info-panel" class="info-modal-card" hidden>
+  <h2>ⓘ APIについて</h2>
+  <ul class="info-modal-list">
+    <li>🔗 <b>データの取得元</b>：このダッシュボードはGoogleの「YouTube Data API」を使って、YouTubeから動画・チャンネルの情報を取得しています。</li>
+    <li>🆓 <b>無料枠</b>：1日10,000ユニットまでは無料です。それを超えると有料になりますが、普段の使い方であれば超えることはまずありません。</li>
+    <li>📊 <b>普段の消費量の目安</b>：通常の利用なら1日あたり1,000ユニット程度です。ただし「チャンネル名で検索」すると1回で約100ユニットと一気に消費します。</li>
+    <li>⚡ <b>節約のコツ</b>：チャンネルのURL・@ハンドル・チャンネルIDを直接入力すれば、検索を使わずに1ユニットで追加できます（検索の1/100）。</li>
+    <li>🛡️ <b>安心の仕組み</b>：使用量が50%・100%に近づくと画面に警告が表示され、95%に達すると自動的にAPI呼び出しを停止するので、無料枠を超える心配はありません。</li>
+  </ul>
+  <div class="info-modal-close-row">
+    <button type="button" id="api-info-close" class="icon-button primary">閉じる</button>
+  </div>
+</section>
+
+<!-- API使用量の警告・自動停止のお知らせ（50%・100%到達の警告、95%到達時の自動停止） -->
+<div id="quota-alert-backdrop" class="info-modal-backdrop" hidden></div>
+<section id="quota-alert-panel" class="info-modal-card" hidden>
+  <h2 id="quota-alert-title">API使用量のお知らせ</h2>
+  <p id="quota-alert-body" class="quota-alert-body"></p>
+  <div class="info-modal-close-row">
+    <button type="button" id="quota-alert-close" class="icon-button primary">わかった</button>
   </div>
 </section>
 
@@ -270,7 +296,10 @@
 </section>
 
 <footer class="app-footer">
-  <span id="quota-badge">API使用量（概算）: -</span>
+  <span class="quota-badge-row">
+    <span id="quota-badge">API使用量（概算）: -</span>
+    <button type="button" class="info-btn api-info-btn" title="APIについて" aria-label="APIについて">ⓘ</button>
+  </span>
 </footer>
 
 <!-- QRコード生成用（他端末への引き継ぎ機能で使用。MITライセンス、外部CDNには依存せず
